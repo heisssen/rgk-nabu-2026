@@ -57,6 +57,7 @@ header {
 .timer-bar.t-done    { background: #f5f5f5; border-color: #e0e0e0; color: #9e9e9e; }
 
 .toolbar {
+  position: sticky; top: 0; z-index: 100;
   background: #fff;
   border-bottom: 1px solid #ddd;
   padding: 10px 24px;
@@ -264,6 +265,20 @@ header {
   font-family: inherit; flex-shrink: 0; transition: opacity 0.15s;
 }
 .votes-refresh-btn:hover { opacity: 0.7; }
+.votes-d7 { font-weight: 600; color: #2e7d32; }
+
+.vote-delta { font-size: 11px; font-weight: 700; min-width: 26px; text-align: right; flex-shrink: 0; line-height: 1; }
+.vote-delta.up { color: #2e7d32; }
+.vote-delta.dn { color: #c62828; }
+
+#scroll-top {
+  position: fixed; bottom: 22px; right: 22px; z-index: 300;
+  width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer;
+  background: #1a73e8; color: #fff; font-size: 17px; line-height: 1;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.22); opacity: 0; pointer-events: none;
+  transition: opacity 0.2s; display: flex; align-items: center; justify-content: center;
+}
+#scroll-top.vis { opacity: 1; pointer-events: auto; }
 
 .vote-count {
   flex-shrink: 0;
@@ -350,9 +365,12 @@ header {
 
 <div id="votes-bar" class="votes-bar" style="display:none">
   <span id="votes-status"></span>
+  <span class="votes-d7" id="votes-d7"></span>
   <span id="refresh-cd" style="color:#5577aa;font-size:12px"></span>
+  <button class="votes-refresh-btn" onclick="copyTopForTG(this)">📋 Копіювати топ</button>
   <button class="votes-refresh-btn" onclick="loadVotes()">↻ Оновити</button>
 </div>
+<button id="scroll-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Вгору">↑</button>
 <div class="count" id="count">44 кандидати</div>
 <div class="list" id="list"></div>
 <div id="charts" style="display:none">
@@ -863,8 +881,16 @@ const C = {
 let filter = 'all', search = '', sort = 'num';
 let VOTES = {}, votesTotal = 0, votesLastFetched = null, votesFetchError = null;
 let nextRefreshAt = null;
-let BALLOTS = []; // [{ts:ms, ip:str, v:Set<number>}]
-let FRAUD   = {}; // {candidateId: [signal, ...]}
+let BALLOTS   = []; // [{ts:ms, ip:str, v:Set<number>}]
+let FRAUD     = {}; // {candidateId: [signal, ...]}
+let PREV_RANK = {}; // {candidateId: rank} — rank before last refresh
+
+function getRankMap(votes) {
+  return Object.entries(votes)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1])
+    .reduce((acc, [id], i) => { acc[+id] = i + 1; return acc; }, {});
+}
 
 // ── Timer ──────────────────────────────────────────────────────────────────────
 function fmtDuration(ms) {
@@ -990,6 +1016,7 @@ function render() {
           <div class="badges" id="bg${i}">${bgs.join('')}</div>
         </div>
         <div class="vote-count" id="vc${i}"></div>
+        <span class="vote-delta" id="vd${i}"></span>
         <div class="arrow">▾</div>
         <div class="vote-bar"><div class="vote-bar-fill" id="vb${i}" style="width:0%"></div></div>
       </div>
@@ -1229,6 +1256,7 @@ async function loadVotes() {
       return;
     }
     const text = await r.text();
+    PREV_RANK = getRankMap(VOTES);
     VOTES = {}; BALLOTS = [];
     votesTotal = 0;
     for (const line of text.split('\n')) {
@@ -1363,10 +1391,13 @@ function applyVotes() {
   const topIds = Object.entries(VOTES).sort((a,b) => b[1]-a[1]).slice(0,15).map(e => +e[0]);
   const maxV = Math.max(...Object.values(VOTES), 1);
   const fraudCount = Object.keys(FRAUD).length;
+  const newRank = getRankMap(VOTES);
+  const hasPrev = Object.keys(PREV_RANK).length > 0;
 
   for (let i = 1; i <= 44; i++) {
     const vc   = document.getElementById('vc' + i);
     const vb   = document.getElementById('vb' + i);
+    const vd   = document.getElementById('vd' + i);
     const item = document.getElementById('i'  + i);
     const bg   = document.getElementById('bg' + i);
     const fd   = document.getElementById('fd' + i);
@@ -1379,6 +1410,19 @@ function applyVotes() {
       vb.style.width = v > 0 ? Math.max(2, Math.round(v / maxV * 100)) + '%' : '0%';
     }
     if (item) item.classList.toggle('leading', v > 0 && topIds.includes(i));
+
+    // Rank delta
+    if (vd) {
+      if (hasPrev && newRank[i] && PREV_RANK[i] && newRank[i] !== PREV_RANK[i]) {
+        const d = PREV_RANK[i] - newRank[i]; // positive = moved up
+        vd.textContent = d > 0 ? `↑${d}` : `↓${Math.abs(d)}`;
+        vd.className   = 'vote-delta ' + (d > 0 ? 'up' : 'dn');
+      } else if (hasPrev && newRank[i] && !PREV_RANK[i]) {
+        vd.textContent = 'new'; vd.className = 'vote-delta up';
+      } else {
+        vd.textContent = ''; vd.className = 'vote-delta';
+      }
+    }
 
     // Fraud badge
     const hasFraud = !!FRAUD[i];
@@ -1430,7 +1474,44 @@ function updateVotesBar() {
   bar.className = 'votes-bar';
   const t = votesLastFetched.toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'});
   st.textContent = `📊 Голосів: ${votesTotal.toLocaleString('uk-UA')} · оновлено о ${t}`;
+  const d7el = document.getElementById('votes-d7');
+  if (d7el) {
+    const topIds = Object.entries(VOTES).sort((a,b) => b[1]-a[1]).slice(0,15).map(e => +e[0]);
+    const d7cnt  = REC.filter(id => topIds.includes(id)).length;
+    d7el.textContent = `· Д7 в топ-15: ${d7cnt}/15`;
+  }
 }
+
+// ── Copy for TG ────────────────────────────────────────────────────────────────
+async function copyTopForTG(btn) {
+  const sorted = Object.entries(VOTES)
+    .map(([id, v]) => ({ id: +id, v, c: C[+id] }))
+    .filter(x => x.c && x.v > 0)
+    .sort((a, b) => b.v - a.v);
+  if (!sorted.length) return;
+  const t = votesLastFetched
+    ? votesLastFetched.toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'})
+    : '—';
+  const lines = sorted.slice(0, 15).map((x, i) => {
+    const marks = (REC.includes(x.id) ? ' ★Д7' : '') + (FRAUD[x.id] ? ' ⚡' : '');
+    return `${i + 1}. ${x.c.name} — ${x.v.toLocaleString('uk-UA')}${marks}`;
+  });
+  const text = `📊 РГК НАБУ X скликання · ${t}\n\n${lines.join('\n')}\n\nhttps://heisssen.github.io/rgk-nabu-2026/`;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = Object.assign(document.createElement('textarea'), {value: text});
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  const orig = btn.textContent;
+  btn.textContent = '✓ Скопійовано';
+  setTimeout(() => { btn.textContent = orig; }, 2000);
+}
+
+// ── Scroll-to-top ──────────────────────────────────────────────────────────────
+window.addEventListener('scroll', () => {
+  document.getElementById('scroll-top').classList.toggle('vis', window.scrollY > 320);
+}, { passive: true });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 const warnCount = Object.values(C).filter(c => c.warn).length;
