@@ -1,0 +1,46 @@
+name: Fetch Votes Protocol
+
+on:
+  schedule:
+    # Every 3 minutes, 06:00–19:00 UTC (= 09:00–22:00 Kyiv), on June 10
+    - cron: '*/3 6-19 10 6 *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download protocol.txt
+        id: fetch
+        run: |
+          HTTP=$(curl -s -o protocol.txt -w "%{http_code}" \
+            --max-time 30 \
+            "https://voting.nabu.gov.ua/public/protocol.txt")
+          echo "http_code=$HTTP" >> "$GITHUB_OUTPUT"
+          echo "HTTP status: $HTTP"
+          if [ "$HTTP" = "200" ]; then
+            echo "Lines: $(wc -l < protocol.txt)"
+          else
+            echo "Fetch failed — keeping previous file if any"
+            exit 0
+          fi
+
+      - name: Commit if changed
+        if: steps.fetch.outputs.http_code == '200'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add protocol.txt
+          if git diff --staged --quiet; then
+            echo "No new votes"
+          else
+            LINES=$(wc -l < protocol.txt)
+            git commit -m "votes: $(date -u '+%H:%M UTC') — ${LINES} рядків"
+            git pull --rebase origin master
+            git push
+          fi

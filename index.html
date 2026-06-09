@@ -188,6 +188,37 @@ header {
 }
 .warn-body { font-size: 14px; color: #4a1010; line-height: 1.65; }
 
+.votes-bar {
+  background: #eef6ff;
+  border-bottom: 1px solid #c8ddf5;
+  padding: 8px 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+  color: #1a4a8a;
+  flex-wrap: wrap;
+}
+.votes-bar.error { background: #fff8e1; border-color: #ffe082; color: #7a5500; }
+.votes-refresh-btn {
+  background: none; border: 1px solid currentColor; border-radius: 99px;
+  padding: 3px 12px; font-size: 12px; cursor: pointer; color: inherit;
+  font-family: inherit; flex-shrink: 0; transition: opacity 0.15s;
+}
+.votes-refresh-btn:hover { opacity: 0.7; }
+
+.vote-count {
+  flex-shrink: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #ddd;
+  min-width: 52px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.vote-count.active { color: #2e7d32; }
+.item.leading > .row .num { color: #2e7d32 !important; font-weight: 700; }
+
 @media (max-width: 700px) {
   header { padding: 12px 16px; }
   .toolbar { padding: 8px 12px; }
@@ -216,9 +247,15 @@ header {
   <button class="btn" id="btn-warn" onclick="setFilter('warn',this)">Із зашкварами</button>
   <button class="btn" onclick="setFilter('other',this)">Інші (26)</button>
   <div class="sep"></div>
+  <button class="btn" id="btn-sort-votes" onclick="setSort('votes',this)">↓ За голосами</button>
+  <div class="sep"></div>
   <input class="search" type="search" placeholder="Пошук..." oninput="doSearch(this.value)">
 </div>
 
+<div id="votes-bar" class="votes-bar" style="display:none">
+  <span id="votes-status"></span>
+  <button class="votes-refresh-btn" onclick="loadVotes()">↻ Оновити</button>
+</div>
 <div class="count" id="count">41 кандидат</div>
 <div class="list" id="list"></div>
 
@@ -700,7 +737,8 @@ const C = {
   }
 };
 
-let filter = 'all', search = '';
+let filter = 'all', search = '', sort = 'num';
+let VOTES = {}, votesTotal = 0, votesLastFetched = null, votesFetchError = null;
 
 function initials(name) {
   const p = name.trim().split(/\s+/);
@@ -716,7 +754,7 @@ function render() {
   list.innerHTML = '';
   let n = 0;
 
-  for (let i = 1; i <= 41; i++) {
+  for (const i of getSortedIds()) {
     const c = C[i];
     if (!c) continue;
     const isRec  = REC.includes(i);
@@ -778,6 +816,7 @@ function render() {
           <div class="org">${c.ngo}</div>
           <div class="badges">${bgs.join('')}</div>
         </div>
+        <div class="vote-count" id="vc${i}"></div>
         <div class="arrow">▾</div>
       </div>
       <div class="detail"><div class="detail-inner">${det}</div></div>`;
@@ -823,11 +862,94 @@ function doSearch(v) {
   render();
 }
 
+function getSortedIds() {
+  const ids = Object.keys(C).map(Number).sort((a,b) => a - b);
+  if (sort === 'votes' && Object.keys(VOTES).length > 0) {
+    ids.sort((a,b) => (VOTES[b]||0) - (VOTES[a]||0));
+  }
+  return ids;
+}
+
+function setSort(s, btn) {
+  if (sort === s) { sort = 'num'; btn.classList.remove('active'); }
+  else            { sort = s;     btn.classList.add('active');    }
+  render();
+  applyVotes();
+}
+
+async function loadVotes() {
+  try {
+    const r = await fetch('./protocol.txt?_=' + Date.now());
+    if (!r.ok) {
+      votesFetchError = r.status === 404 ? null : `Помилка HTTP ${r.status}`;
+      updateVotesBar();
+      return;
+    }
+    const text = await r.text();
+    VOTES = {};
+    votesTotal = 0;
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      votesTotal++;
+      for (const part of line.split('\t')) {
+        if (part.startsWith('V=')) {
+          for (const n of part.slice(2).split(',')) {
+            const id = parseInt(n);
+            if (id >= 1 && id <= 41) VOTES[id] = (VOTES[id]||0) + 1;
+          }
+          break;
+        }
+      }
+    }
+    votesLastFetched = new Date();
+    votesFetchError = null;
+  } catch(e) {
+    votesFetchError = 'Помилка завантаження';
+  }
+  applyVotes();
+  if (sort === 'votes') render();
+}
+
+function applyVotes() {
+  const topIds = Object.entries(VOTES)
+    .sort((a,b) => b[1]-a[1]).slice(0,15).map(e => +e[0]);
+  for (let i = 1; i <= 41; i++) {
+    const vc   = document.getElementById('vc'  + i);
+    const item = document.getElementById('i'   + i);
+    const v = VOTES[i] || 0;
+    if (vc) {
+      vc.textContent = v > 0 ? v.toLocaleString('uk-UA') : '';
+      vc.className   = 'vote-count' + (v > 0 ? ' active' : '');
+    }
+    if (item) item.classList.toggle('leading', v > 0 && topIds.includes(i));
+  }
+  updateVotesBar();
+}
+
+function updateVotesBar() {
+  const bar = document.getElementById('votes-bar');
+  const st  = document.getElementById('votes-status');
+  if (!bar || !st) return;
+  if (votesFetchError) {
+    bar.style.display = '';
+    bar.className = 'votes-bar error';
+    st.textContent = '⚠ ' + votesFetchError;
+    return;
+  }
+  if (!votesLastFetched) { bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  bar.className = 'votes-bar';
+  const t = votesLastFetched.toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'});
+  st.textContent = `📊 Голосів: ${votesTotal.toLocaleString('uk-UA')} · оновлено о ${t}`;
+}
+
 // update warn count in button
 const warnCount = Object.values(C).filter(c => c.warn).length;
 document.getElementById('btn-warn').textContent = `Із зашкварами (${warnCount})`;
 
 render();
+loadVotes();
+setInterval(loadVotes, 3 * 60 * 1000);
 </script>
 </body>
 </html>
