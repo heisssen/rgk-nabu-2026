@@ -334,8 +334,8 @@ header {
 
 <div class="toolbar">
   <button class="btn active" onclick="setFilter('all',this)">Всі (44)</button>
-  <button class="btn" onclick="setFilter('rec',this)">Рекомендовані (15)</button>
-  <button class="btn" id="btn-warn" onclick="setFilter('warn',this)">Із зашкварами</button>
+  <button class="btn" onclick="setFilter('rec',this)">Д7 (15)</button>
+  <button class="btn" id="btn-warn" onclick="setFilter('warn',this)">Є питання</button>
   <button class="btn" id="btn-fraud" onclick="setFilter('fraud',this)" style="display:none">⚡ Накрутка</button>
   <button class="btn" onclick="setFilter('other',this)">Інші (29)</button>
   <div class="sep"></div>
@@ -950,8 +950,8 @@ function render() {
     }
 
     const bgs = [];
-    if (isRec)  bgs.push(`<span class="badge b-rec">★ Рекомендований</span>`);
-    if (isWarn) bgs.push(`<span class="badge b-warn">⚠ Зашквар</span>`);
+    if (isRec)  bgs.push(`<span class="badge b-rec">★ Д7</span>`);
+    if (isWarn) bgs.push(`<span class="badge b-warn">⚠ Є питання</span>`);
     if (c.rgk)  bgs.push(`<span class="badge b-rgk">✓ Чинний РГК</span>`);
 
     let det = `<div id="fd${i}"></div><a class="pdf-link" href="${c.pdf}" target="_blank" onclick="event.stopPropagation()">📄 PDF-документи кандидата</a>`;
@@ -972,7 +972,7 @@ function render() {
     }
     if (c.warn) {
       det += `<div class="warn-section">
-        <div class="warn-label">⚠ Зашквари / Питання</div>
+        <div class="warn-label">⚠ Є питання</div>
         <div class="warn-body">${c.warn.replace(/\n/g,'<br>')}</div>
       </div>`;
     }
@@ -1434,7 +1434,7 @@ function updateVotesBar() {
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 const warnCount = Object.values(C).filter(c => c.warn).length;
-document.getElementById('btn-warn').textContent = `Із зашкварами (${warnCount})`;
+document.getElementById('btn-warn').textContent = `Є питання (${warnCount})`;
 
 render();
 loadVotes();
