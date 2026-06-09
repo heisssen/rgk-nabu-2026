@@ -277,7 +277,37 @@ header {
 .vote-count.active { color: #2e7d32; }
 .item.leading > .row .num { color: #2e7d32 !important; font-weight: 700; }
 
+/* ── Charts ──────────────────────────────────────────────────────────────── */
+#charts { max-width: 1100px; margin: 0 auto; padding: 0 20px 60px; }
+
+.chart-block { margin-top: 20px; }
+.chart-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.8px; color: #999; margin-bottom: 10px;
+}
+
+.cbar { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; min-height: 32px; }
+.cbar-pos  { font-size: 11px; color: #bbb; width: 20px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.cbar-meta { flex: 0 0 170px; overflow: hidden; }
+.cbar-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #111; }
+.cbar-org  { font-size: 10px; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.cbar-track { flex: 1; background: #f0f4f8; border-radius: 3px; height: 26px; position: relative; overflow: hidden; min-width: 80px; }
+.cbar-fill  { height: 100%; border-radius: 3px 0 0 3px; transition: width 0.6s ease; background: #c8ddf5; }
+.cbar.c-lead  .cbar-fill { background: #a5d6a7; }
+.cbar.c-fraud .cbar-fill { background: #ffcc80; }
+.cbar-val  { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 12px; font-weight: 600; color: #555; line-height: 1; }
+
+.tchart-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.tchart-canvas { display: block; width: 100%; height: 160px; }
+.tchart-legend { display: flex; gap: 16px; margin-top: 6px; font-size: 11px; color: #888; }
+.tchart-legend span { display: flex; align-items: center; gap: 5px; }
+.tleg-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+.chart-empty { color: #bbb; font-size: 13px; padding: 24px 0; }
+
 @media (max-width: 700px) {
+  .cbar-meta { flex: 0 0 120px; }
+}
   header { padding: 12px 16px; }
   .vote-btn { padding: 6px 14px; font-size: 12px; }
   .timer-bar { padding: 7px 14px; font-size: 12px; }
@@ -313,6 +343,7 @@ header {
   <div class="sep"></div>
   <button class="btn active" id="btn-tags" onclick="toggleTags()">🏷 Теги</button>
   <button class="btn" onclick="collapseAll()">↑ Згорнути</button>
+  <button class="btn" id="btn-charts" onclick="toggleCharts(this)">📊 Графіки</button>
   <div class="sep"></div>
   <input class="search" type="search" placeholder="Пошук..." oninput="doSearch(this.value)">
 </div>
@@ -324,6 +355,19 @@ header {
 </div>
 <div class="count" id="count">44 кандидати</div>
 <div class="list" id="list"></div>
+<div id="charts" style="display:none">
+  <div class="chart-block">
+    <div class="chart-label">Рейтинг за голосами</div>
+    <div id="chart-rank"><div class="chart-empty">Голоси ще не завантажено</div></div>
+  </div>
+  <div class="chart-block" style="margin-top:28px">
+    <div class="chart-label">Активність голосування · 10 червня · 09:00–21:00 Київ</div>
+    <div class="tchart-wrap">
+      <canvas id="canvas-time" class="tchart-canvas"></canvas>
+    </div>
+    <div class="tchart-legend" id="tchart-legend"></div>
+  </div>
+</div>
 
 <script>
 const REC = [1,2,3,6,7,14,23,26,30,32,37,40,42,43,44];
@@ -1015,6 +1059,158 @@ function collapseAll() {
   });
 }
 
+// ── Charts ─────────────────────────────────────────────────────────────────
+let chartsVisible = false;
+
+function toggleCharts(btn) {
+  chartsVisible = !chartsVisible;
+  btn.classList.toggle('active', chartsVisible);
+  document.getElementById('charts').style.display = chartsVisible ? '' : 'none';
+  document.getElementById('list').style.display   = chartsVisible ? 'none' : '';
+  document.getElementById('count').style.display  = chartsVisible ? 'none' : '';
+  if (chartsVisible) renderCharts();
+}
+
+function renderCharts() {
+  renderRankChart();
+  renderTimeChart();
+}
+
+function renderRankChart() {
+  const el = document.getElementById('chart-rank');
+  if (!el) return;
+  const sorted = Object.entries(VOTES)
+    .map(([id, v]) => ({ id: +id, v, c: C[+id] }))
+    .filter(x => x.c && x.v > 0)
+    .sort((a, b) => b.v - a.v);
+  if (!sorted.length) {
+    el.innerHTML = '<div class="chart-empty">Голоси ще не завантажено</div>';
+    return;
+  }
+  const maxV  = sorted[0].v;
+  const topSet = new Set(sorted.slice(0, 15).map(x => x.id));
+  el.innerHTML = sorted.map((x, i) => {
+    const isLead  = topSet.has(x.id);
+    const isFraud = !!FRAUD[x.id];
+    const cls = 'cbar' + (isLead ? ' c-lead' : '') + (isFraud ? ' c-fraud' : '');
+    const pct = Math.max(2, Math.round(x.v / maxV * 100));
+    const marks = (isFraud ? ' <span style="color:#bf360c;font-size:10px;font-weight:700">⚡</span>' : '')
+                + (REC.includes(x.id) ? ' <span style="color:#975f00;font-size:10px">★</span>' : '');
+    return `<div class="${cls}">
+      <div class="cbar-pos">${i + 1}</div>
+      <div class="cbar-meta">
+        <div class="cbar-name">${x.c.name}${marks}</div>
+        <div class="cbar-org">${x.c.ngo}</div>
+      </div>
+      <div class="cbar-track">
+        <div class="cbar-fill" style="width:${pct}%"></div>
+        <span class="cbar-val">${x.v.toLocaleString('uk-UA')}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderTimeChart() {
+  const canvas = document.getElementById('canvas-time');
+  const legend = document.getElementById('tchart-legend');
+  if (!canvas) return;
+  if (!BALLOTS.length) {
+    canvas.style.display = 'none';
+    if (legend) legend.innerHTML = '';
+    return;
+  }
+  canvas.style.display = 'block';
+
+  const W      = 10 * 60 * 1000;
+  const startMs = VOTE_START.getTime();
+  const endMs   = VOTE_END.getTime();
+  const nBuckets = Math.ceil((endMs - startMs) / W); // 72
+
+  // Bucket vote counts
+  const buckets = new Array(nBuckets).fill(0);
+  for (const b of BALLOTS) {
+    const idx = Math.floor((b.ts - startMs) / W);
+    if (idx >= 0 && idx < nBuckets) buckets[idx]++;
+  }
+
+  // Find peak windows of fraud-flagged candidates
+  const fraudWins = new Set();
+  for (const idStr of Object.keys(FRAUD)) {
+    const id = +idStr;
+    const ts = BALLOTS.filter(b => b.v.has(id)).map(b => b.ts).sort((a, z) => a - z);
+    if (ts.length < 5) continue;
+    let j = 0, maxWin = 0, peakStart = -1;
+    for (let i = 0; i < ts.length; i++) {
+      while (j < ts.length && ts[j] - ts[i] < W) j++;
+      if (j - i > maxWin) { maxWin = j - i; peakStart = ts[i]; }
+    }
+    if (peakStart >= 0) {
+      const wi = Math.floor((peakStart - startMs) / W);
+      if (wi >= 0 && wi < nBuckets) fraudWins.add(wi);
+    }
+  }
+
+  const maxB = Math.max(...buckets, 1);
+  const dpr  = window.devicePixelRatio || 1;
+  const cW   = canvas.offsetWidth  || 800;
+  const cH   = canvas.offsetHeight || 160;
+  canvas.width  = cW * dpr;
+  canvas.height = cH * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const PL = 4, PR = 4, PT = 10, PB = 26;
+  const chartW = cW - PL - PR;
+  const chartH = cH - PT - PB;
+  const bw = chartW / nBuckets;
+
+  ctx.clearRect(0, 0, cW, cH);
+
+  // Horizontal grid lines (4)
+  ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 1;
+  for (let g = 1; g <= 4; g++) {
+    const y = PT + chartH - chartH * g / 4;
+    ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(PL + chartW, y); ctx.stroke();
+  }
+
+  // Baseline
+  ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PL, PT + chartH); ctx.lineTo(PL + chartW, PT + chartH); ctx.stroke();
+
+  // Bars
+  for (let i = 0; i < nBuckets; i++) {
+    const h = buckets[i] > 0 ? Math.max(2, Math.round(buckets[i] / maxB * chartH)) : 0;
+    if (!h) continue;
+    const x = PL + i * bw;
+    const y = PT + chartH - h;
+    ctx.fillStyle = fraudWins.has(i) ? '#ffcc80' : '#c8ddf5';
+    if (ctx.roundRect) {
+      ctx.beginPath(); ctx.roundRect(x + 1, y, bw - 2, h, [2, 2, 0, 0]); ctx.fill();
+    } else {
+      ctx.fillRect(x + 1, y, bw - 2, h);
+    }
+  }
+
+  // Hour labels every 6 buckets (= 60 min)
+  ctx.fillStyle = '#aaa';
+  ctx.font = `10px -apple-system,BlinkMacSystemFont,sans-serif`;
+  ctx.textAlign = 'center';
+  for (let h = 0; h <= 12; h++) {
+    const bi = h * 6;
+    const x  = PL + bi * bw;
+    if (bi <= nBuckets) ctx.fillText(`${9 + h}:00`, x, cH - 6);
+  }
+
+  // Legend
+  if (legend) {
+    const hasFraud = fraudWins.size > 0;
+    legend.innerHTML = `<span><span class="tleg-dot" style="background:#c8ddf5"></span>Голоси (10 хв)</span>`
+      + (hasFraud ? `<span><span class="tleg-dot" style="background:#ffcc80"></span>Підозрілий сплеск</span>` : '');
+  }
+}
+
+window.addEventListener('resize', () => { if (chartsVisible) renderTimeChart(); });
+
 function setSort(s, btn) {
   if (sort === s) { sort = 'num'; btn.classList.remove('active'); }
   else            { sort = s;     btn.classList.add('active');    }
@@ -1216,6 +1412,7 @@ function applyVotes() {
   }
 
   updateVotesBar();
+  if (chartsVisible) renderCharts();
 }
 
 function updateVotesBar() {
