@@ -179,10 +179,24 @@ header {
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
-.b-rec  { background: #fef3dd; color: #975f00; }
-.b-warn { background: #fdecea; color: #b71c1c; }
-.b-rgk  { background: #e8f5e9; color: #2e7d32; }
-.no-tags .badges,
+.b-rec   { background: #fef3dd; color: #975f00; }
+.b-warn  { background: #fdecea; color: #b71c1c; }
+.b-rgk   { background: #e8f5e9; color: #2e7d32; }
+.b-fraud { background: #fff3e0; color: #bf360c; font-weight: 700; }
+
+.fraud-section {
+  margin-left: 70px; margin-top: 14px; padding: 10px 12px;
+  background: #fff3e0; border-left: 3px solid #ff6d00; border-radius: 0 4px 4px 0;
+}
+.fraud-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.8px; color: #bf360c; margin-bottom: 6px;
+}
+.fraud-signal { font-size: 13px; color: #4a2800; line-height: 1.7; }
+.fraud-signal + .fraud-signal { margin-top: 3px; padding-top: 3px; border-top: 1px solid #ffe0b2; }
+.fraud-signal::before { content: '→ '; font-weight: 600; }
+
+.no-tags .badge:not(.b-fraud) { display: none; }
 .no-tags .warn-section { display: none !important; }
 
 .arrow { flex-shrink: 0; font-size: 10px; color: #bbb; transition: transform 0.2s; }
@@ -272,7 +286,7 @@ header {
   .list { padding: 0 0 50px; }
   .item:first-child { margin-top: 8px; }
   .search { width: 130px; }
-  .section, .pdf-link, .warn-section { margin-left: 54px; }
+  .section, .pdf-link, .warn-section, .fraud-section { margin-left: 54px; }
 }
 </style>
 </head>
@@ -292,6 +306,7 @@ header {
   <button class="btn active" onclick="setFilter('all',this)">Всі (44)</button>
   <button class="btn" onclick="setFilter('rec',this)">Рекомендовані (15)</button>
   <button class="btn" id="btn-warn" onclick="setFilter('warn',this)">Із зашкварами</button>
+  <button class="btn" id="btn-fraud" onclick="setFilter('fraud',this)" style="display:none">⚡ Накрутка</button>
   <button class="btn" onclick="setFilter('other',this)">Інші (29)</button>
   <div class="sep"></div>
   <button class="btn" id="btn-sort-votes" onclick="setSort('votes',this)">↓ За голосами</button>
@@ -804,6 +819,8 @@ const C = {
 let filter = 'all', search = '', sort = 'num';
 let VOTES = {}, votesTotal = 0, votesLastFetched = null, votesFetchError = null;
 let nextRefreshAt = null;
+let BALLOTS = []; // [{ts:ms, ip:str, v:Set<number>}]
+let FRAUD   = {}; // {candidateId: [signal, ...]}
 
 // ── Timer ──────────────────────────────────────────────────────────────────────
 function fmtDuration(ms) {
@@ -872,9 +889,10 @@ function render() {
     const isWarn = !!c.warn;
 
     let show = true;
-    if (filter === 'rec'   && !isRec)  show = false;
-    if (filter === 'warn'  && !isWarn) show = false;
-    if (filter === 'other' && isRec)   show = false;
+    if (filter === 'rec'   && !isRec)         show = false;
+    if (filter === 'warn'  && !isWarn)         show = false;
+    if (filter === 'fraud' && !FRAUD[i])       show = false;
+    if (filter === 'other' && isRec)           show = false;
     if (search && !c.name.toLowerCase().includes(search)) show = false;
     if (!show) continue;
     n++;
@@ -892,7 +910,7 @@ function render() {
     if (isWarn) bgs.push(`<span class="badge b-warn">⚠ Зашквар</span>`);
     if (c.rgk)  bgs.push(`<span class="badge b-rgk">✓ Чинний РГК</span>`);
 
-    let det = `<a class="pdf-link" href="${c.pdf}" target="_blank" onclick="event.stopPropagation()">📄 PDF-документи кандидата</a>`;
+    let det = `<div id="fd${i}"></div><a class="pdf-link" href="${c.pdf}" target="_blank" onclick="event.stopPropagation()">📄 PDF-документи кандидата</a>`;
 
     if (c.bio) {
       det += `<div class="section">
@@ -925,7 +943,7 @@ function render() {
         <div class="info">
           <div class="name">${c.name}</div>
           <div class="org">${c.ngo}</div>
-          <div class="badges">${bgs.join('')}</div>
+          <div class="badges" id="bg${i}">${bgs.join('')}</div>
         </div>
         <div class="vote-count" id="vc${i}"></div>
         <div class="arrow">▾</div>
@@ -1015,21 +1033,27 @@ async function loadVotes() {
       return;
     }
     const text = await r.text();
-    VOTES = {};
+    VOTES = {}; BALLOTS = [];
     votesTotal = 0;
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
-      votesTotal++;
-      for (const part of line.split('\t')) {
+      const parts = line.split('\t');
+      const tsRaw = parseInt(parts[0]) || 0;
+      const tsMs  = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw; // seconds → ms
+      const ip    = parts[1] || '';
+      let v = null;
+      for (const part of parts) {
         if (part.startsWith('V=')) {
-          for (const n of part.slice(2).split(',')) {
-            const id = parseInt(n);
-            if (id >= 1 && id <= 44) VOTES[id] = (VOTES[id]||0) + 1;
-          }
+          v = part.slice(2).split(',').map(Number).filter(n => n >= 1 && n <= 44);
           break;
         }
       }
+      if (!v || !v.length) continue;
+      votesTotal++;
+      BALLOTS.push({ ts: tsMs, ip, v: new Set(v) });
+      for (const id of v) VOTES[id] = (VOTES[id]||0) + 1;
     }
+    FRAUD = detectFraud();
     votesLastFetched = new Date();
     votesFetchError = null;
   } catch(e) {
@@ -1039,13 +1063,117 @@ async function loadVotes() {
   if (sort === 'votes') render();
 }
 
+// ── Fraud detection ────────────────────────────────────────────────────────────
+function detectFraud() {
+  const result = {};
+  if (BALLOTS.length < 15) return result;
+
+  const total = BALLOTS.length;
+  const W = 10 * 60 * 1000; // 10-min burst window
+
+  // Per-candidate arrays
+  const candBallots = {};
+  for (let id = 1; id <= 44; id++) {
+    const bs = BALLOTS.filter(b => b.v.has(id));
+    if (bs.length >= 5) candBallots[id] = bs;
+  }
+
+  // Global subnet counts
+  const subnetTotal = {};
+  for (const b of BALLOTS) {
+    const sn = b.ip.split('.').slice(0,3).join('.');
+    subnetTotal[sn] = (subnetTotal[sn]||0) + 1;
+  }
+
+  // Alg 3: identical ballots (pre-compute once)
+  const ballotKey = b => [...b.v].sort((a,z)=>a-z).join(',');
+  const ballotFreq = {};
+  for (const b of BALLOTS) { const k = ballotKey(b); ballotFreq[k] = (ballotFreq[k]||0)+1; }
+
+  // Alg 4: z-score votes/uniqueIPs (pre-compute all ratios)
+  const ratioMap = {};
+  for (const [id, bs] of Object.entries(candBallots)) {
+    ratioMap[id] = bs.length / new Set(bs.map(b=>b.ip)).size;
+  }
+  const ratioVals = Object.values(ratioMap);
+  const rMean = ratioVals.reduce((a,v)=>a+v,0) / ratioVals.length;
+  const rStd  = Math.sqrt(ratioVals.reduce((a,v)=>a+(v-rMean)**2,0) / ratioVals.length);
+
+  for (const [idStr, bs] of Object.entries(candBallots)) {
+    const id = +idStr;
+    const n  = bs.length;
+    const signals = [];
+
+    // Alg 1 — subnet concentration
+    const snCand = {};
+    for (const b of bs) { const sn=b.ip.split('.').slice(0,3).join('.'); snCand[sn]=(snCand[sn]||0)+1; }
+    let maxLift=0, topSn=null, topSnCnt=0;
+    for (const [sn, cnt] of Object.entries(snCand)) {
+      const lift = (cnt/n) / (subnetTotal[sn]/total);
+      if (lift>maxLift) { maxLift=lift; topSn=sn; topSnCnt=cnt; }
+    }
+    if (maxLift>5 && topSnCnt>=5 && topSnCnt/n>=0.15)
+      signals.push(`IP-концентрація: підмережа ${topSn}.x — ${topSnCnt} з ${n} голосів (lift ×${maxLift.toFixed(1)})`);
+
+    // Alg 2 — temporal burst (sliding window, O(n))
+    const ts = bs.map(b=>b.ts).sort((a,z)=>a-z);
+    const duration = ts[ts.length-1] - ts[0];
+    if (duration > W) {
+      let j=0, maxWin=0;
+      for (let i=0; i<ts.length; i++) {
+        while (j<ts.length && ts[j]-ts[i]<W) j++;
+        if (j-i > maxWin) maxWin=j-i;
+      }
+      const peakRatio = maxWin/n;
+      const avgPerWin  = n / (duration/W);
+      if (peakRatio>0.35 && maxWin>=5)
+        signals.push(`Часовий сплеск: ${maxWin} голосів за 10 хв (${Math.round(peakRatio*100)}% усього, ×${(maxWin/avgPerWin).toFixed(1)} від норми)`);
+    }
+
+    // Alg 3 — identical ballots
+    let dupSum=0, maxGroup=0;
+    for (const b of bs) {
+      const f = ballotFreq[ballotKey(b)];
+      if (f>1) { dupSum+=1; if(f>maxGroup) maxGroup=f; }
+    }
+    const dupRatio = dupSum/n;
+    if (dupRatio>0.20 && dupSum>=5)
+      signals.push(`Ідентичні бюлетені: ${dupSum} з ${n} голосів є клонами (${Math.round(dupRatio*100)}%), найбільша група: ${maxGroup}`);
+
+    // Alg 4 — z-score
+    if (rStd > 0.01) {
+      const z = (ratioMap[id]-rMean)/rStd;
+      if (z>2.0)
+        signals.push(`Статистичний викид: ${ratioMap[id].toFixed(2)} голоси/IP (z=${z.toFixed(1)}, поріг ≤${(rMean+2*rStd).toFixed(2)})`);
+    }
+
+    // Alg 5 — regular intervals (bot cadence)
+    if (ts.length>=8) {
+      const intervals = [];
+      for (let i=1; i<ts.length; i++) intervals.push(ts[i]-ts[i-1]);
+      const iMean = intervals.reduce((a,v)=>a+v,0)/intervals.length;
+      const iStd  = Math.sqrt(intervals.reduce((a,v)=>a+(v-iMean)**2,0)/intervals.length);
+      const cv    = iStd/iMean;
+      if (cv<0.25 && iMean<30000)
+        signals.push(`Регулярні інтервали: голоси кожні ~${(iMean/1000).toFixed(1)}с, CV=${cv.toFixed(2)} — схоже на бота`);
+    }
+
+    if (signals.length >= 2) result[id] = signals;
+  }
+  return result;
+}
+
 function applyVotes() {
   const topIds = Object.entries(VOTES).sort((a,b) => b[1]-a[1]).slice(0,15).map(e => +e[0]);
   const maxV = Math.max(...Object.values(VOTES), 1);
+  const fraudCount = Object.keys(FRAUD).length;
+
   for (let i = 1; i <= 44; i++) {
     const vc   = document.getElementById('vc' + i);
     const vb   = document.getElementById('vb' + i);
     const item = document.getElementById('i'  + i);
+    const bg   = document.getElementById('bg' + i);
+    const fd   = document.getElementById('fd' + i);
     const v = VOTES[i] || 0;
     if (vc) {
       vc.textContent = v > 0 ? v.toLocaleString('uk-UA') : '';
@@ -1055,7 +1183,38 @@ function applyVotes() {
       vb.style.width = v > 0 ? Math.max(2, Math.round(v / maxV * 100)) + '%' : '0%';
     }
     if (item) item.classList.toggle('leading', v > 0 && topIds.includes(i));
+
+    // Fraud badge
+    const hasFraud = !!FRAUD[i];
+    if (bg) {
+      let fb = bg.querySelector('.b-fraud');
+      if (hasFraud && !fb) {
+        const s = document.createElement('span');
+        s.className = 'badge b-fraud'; s.textContent = '⚡ Накрутка';
+        bg.appendChild(s);
+      } else if (!hasFraud && fb) { fb.remove(); }
+    }
+
+    // Fraud detail section
+    if (fd) {
+      fd.innerHTML = hasFraud
+        ? `<div class="fraud-section"><div class="fraud-label">⚡ Підозра на накрутку голосів</div>${FRAUD[i].map(s=>`<div class="fraud-signal">${s}</div>`).join('')}</div>`
+        : '';
+    }
   }
+
+  // Fraud filter button
+  const btnFraud = document.getElementById('btn-fraud');
+  if (btnFraud) {
+    if (fraudCount > 0) {
+      btnFraud.style.display = '';
+      btnFraud.textContent = `⚡ Накрутка (${fraudCount})`;
+    } else {
+      btnFraud.style.display = 'none';
+      if (filter === 'fraud') setFilter('all', document.querySelector('.toolbar .btn'));
+    }
+  }
+
   updateVotesBar();
 }
 
