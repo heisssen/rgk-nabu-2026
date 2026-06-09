@@ -1259,24 +1259,29 @@ async function loadVotes() {
     PREV_RANK = getRankMap(VOTES);
     VOTES = {}; BALLOTS = [];
     votesTotal = 0;
+    const seenHashes = new Set();
+    let dupCount = 0;
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
       const parts = line.split('\t');
       const tsRaw = parseInt(parts[0]) || 0;
-      const tsMs  = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw; // seconds → ms
+      const tsMs  = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
       const ip    = parts[1] || '';
-      let v = null;
+      let v = null, hash = null;
       for (const part of parts) {
-        if (part.startsWith('V=')) {
-          v = part.slice(2).split(',').map(Number).filter(n => n >= 1 && n <= 44);
-          break;
-        }
+        if (part.startsWith('V=')) v = part.slice(2).split(',').map(Number).filter(n => n >= 1 && n <= 44);
+        if (part.startsWith('S=')) hash = part.slice(2).trim();
       }
       if (!v || !v.length) continue;
+      if (hash) {
+        if (seenHashes.has(hash)) { dupCount++; continue; }
+        seenHashes.add(hash);
+      }
       votesTotal++;
       BALLOTS.push({ ts: tsMs, ip, v: new Set(v) });
       for (const id of v) VOTES[id] = (VOTES[id]||0) + 1;
     }
+    if (dupCount > 0) console.warn(`protocol.txt: відфільтровано ${dupCount} дублікатів S=`);
     FRAUD = detectFraud();
     votesLastFetched = new Date();
     votesFetchError = null;
