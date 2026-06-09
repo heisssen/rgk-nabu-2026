@@ -182,6 +182,8 @@ header {
 .b-rec  { background: #fef3dd; color: #975f00; }
 .b-warn { background: #fdecea; color: #b71c1c; }
 .b-rgk  { background: #e8f5e9; color: #2e7d32; }
+.no-tags .badges,
+.no-tags .warn-section { display: none !important; }
 
 .arrow { flex-shrink: 0; font-size: 10px; color: #bbb; transition: transform 0.2s; }
 .item.open .arrow { transform: rotate(180deg); }
@@ -293,6 +295,9 @@ header {
   <button class="btn" onclick="setFilter('other',this)">Інші (29)</button>
   <div class="sep"></div>
   <button class="btn" id="btn-sort-votes" onclick="setSort('votes',this)">↓ За голосами</button>
+  <div class="sep"></div>
+  <button class="btn active" id="btn-tags" onclick="toggleTags()">🏷 Теги</button>
+  <button class="btn" onclick="collapseAll()">↑ Згорнути</button>
   <div class="sep"></div>
   <input class="search" type="search" placeholder="Пошук..." oninput="doSearch(this.value)">
 </div>
@@ -976,6 +981,20 @@ function getSortedIds() {
     ids.sort((a,b) => (VOTES[b]||0) - (VOTES[a]||0));
   }
   return ids;
+}
+
+function toggleTags() {
+  const on = document.body.classList.toggle('no-tags');
+  document.getElementById('btn-tags').classList.toggle('active', !on);
+}
+
+function collapseAll() {
+  document.querySelectorAll('.item.open').forEach(item => {
+    const det = item.querySelector('.detail');
+    det.style.maxHeight = det.scrollHeight + 'px';
+    requestAnimationFrame(() => requestAnimationFrame(() => { det.style.maxHeight = '0'; }));
+    item.classList.remove('open');
+  });
 }
 
 function setSort(s, btn) {
