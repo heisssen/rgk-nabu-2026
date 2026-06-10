@@ -184,6 +184,7 @@ header {
 .b-warn  { background: #fdecea; color: #b71c1c; }
 .b-rgk   { background: #e8f5e9; color: #2e7d32; }
 .b-fraud { background: #fff3e0; color: #bf360c; font-weight: 700; }
+.b-up    { background: #ede7f6; color: #4527a0; }
 
 .fraud-section {
   margin-left: 70px; margin-top: 14px; padding: 10px 12px;
@@ -389,6 +390,7 @@ header {
 
 <script>
 const REC = [1,2,3,6,7,14,23,26,30,32,37,40,42,43,44];
+const UP  = [5,9,13,16,19,25,28,38,39];
 const WB  = 'https://web.archive.org/web/20240328124640im_/https://rgk-nabu.org/imglib/600px/';
 
 // Voting window (UTC): 09:00–21:00 Kyiv (UTC+3)
@@ -976,9 +978,10 @@ function render() {
     }
 
     const bgs = [];
-    if (isRec)  bgs.push(`<span class="badge b-rec">★ Д7</span>`);
-    if (isWarn) bgs.push(`<span class="badge b-warn">⚠ Є питання</span>`);
-    if (c.rgk)  bgs.push(`<span class="badge b-rgk">✓ Чинний РГК</span>`);
+    if (isRec)        bgs.push(`<span class="badge b-rec">★ Д7</span>`);
+    if (isWarn)       bgs.push(`<span class="badge b-warn">⚠ Є питання</span>`);
+    if (c.rgk)        bgs.push(`<span class="badge b-rgk">✓ Чинний РГК</span>`);
+    if (UP.includes(i)) bgs.push(`<span class="badge b-up">УП</span>`);
 
     let det = `<div id="fd${i}"></div><a class="pdf-link" href="${c.pdf}" target="_blank" onclick="event.stopPropagation()">📄 PDF-документи кандидата</a>`;
 
