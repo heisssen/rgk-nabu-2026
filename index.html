@@ -1250,21 +1250,20 @@ async function loadVotes() {
   nextRefreshAt = Date.now() + 3 * 60 * 1000;
   try {
     const DIRECT = 'https://voting.nabu.gov.ua/public/protocol.txt';
-    const PROXY  = 'https://corsproxy.io/?' + encodeURIComponent(DIRECT);
-    const bust   = '&_=' + Date.now();
+    const URLS = [
+      './protocol.txt?_=' + Date.now(),
+      'https://corsproxy.io/?' + DIRECT,
+      'https://api.allorigins.win/raw?url=' + encodeURIComponent(DIRECT),
+    ];
 
     let text = null;
-    // 1) локальний файл (якщо Actions синхронізував)
-    try {
-      const r0 = await fetch('./protocol.txt?_=' + Date.now());
-      if (r0.ok) text = await r0.text();
-    } catch(_) {}
-    // 2) CORS-проксі
-    if (!text) {
-      const r1 = await fetch(PROXY + bust);
-      if (!r1.ok) throw new Error('HTTP ' + r1.status);
-      text = await r1.text();
+    for (const url of URLS) {
+      try {
+        const r = await fetch(url);
+        if (r.ok) { text = await r.text(); break; }
+      } catch(_) {}
     }
+    if (!text) throw new Error('Всі джерела недоступні');
     PREV_RANK = getRankMap(VOTES);
     VOTES = {}; BALLOTS = [];
     votesTotal = 0;
