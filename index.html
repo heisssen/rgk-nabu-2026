@@ -1493,14 +1493,35 @@ async function copyTopForTG(btn) {
     .filter(x => x.c && x.v > 0)
     .sort((a, b) => b.v - a.v);
   if (!sorted.length) return;
+
   const t = votesLastFetched
     ? votesLastFetched.toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'})
     : '—';
-  const lines = sorted.slice(0, 15).map((x, i) => {
-    const marks = (REC.includes(x.id) ? ' ★Д7' : '') + (FRAUD[x.id] ? ' ⚡' : '');
-    return `${i + 1}. ${x.c.name} — ${x.v.toLocaleString('uk-UA')}${marks}`;
+
+  const top15 = sorted.slice(0, 15);
+  const d7cnt = REC.filter(id => top15.some(x => x.id === id)).length;
+
+  // "Прізвище Ім'я Побатькові" → "Прізвище Ім'я"
+  const shortName = n => n.split(' ').slice(0, 2).join(' ');
+
+  const lines = top15.map((x, i) => {
+    const pos   = i + 1;
+    const medal = pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `${pos}.`;
+    const rec   = REC.includes(x.id) ? ' ★' : '';
+    const fraud = FRAUD[x.id] ? ' ⚡' : '';
+    return `${medal} №${x.id} ${shortName(x.c.name)}${rec}${fraud} — ${x.v.toLocaleString('uk-UA')} гол`;
   });
-  const text = `📊 РГК НАБУ X скликання · ${t}\n\n${lines.join('\n')}\n\nhttps://heisssen.github.io/rgk-nabu-2026/`;
+
+  const text = [
+    `📊 РГК НАБУ X · ТОП-15`,
+    `🕐 ${t} · усього ${votesTotal.toLocaleString('uk-UA')} голосів · Д7 у топ: ${d7cnt}/15`,
+    ``,
+    lines.join('\n'),
+    ``,
+    `★ рекомендований Д7  ⚡ підозра накрутки`,
+    `🗳 heisssen.github.io/rgk-nabu-2026`,
+  ].join('\n');
+
   try {
     await navigator.clipboard.writeText(text);
   } catch {
