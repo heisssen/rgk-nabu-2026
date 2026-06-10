@@ -414,6 +414,45 @@ header {
       <span style="color:#aaa">· натисніть на рядок → перейти до кандидата</span>
     </div>
   </div>
+
+  <div class="chart-block" style="margin-top:28px">
+    <div class="chart-label">Топ-25 патернів бюлетенів</div>
+    <div id="chart-patterns"><div class="chart-empty">Голоси ще не завантажено</div></div>
+  </div>
+
+  <div class="chart-block" style="margin-top:28px">
+    <div class="chart-label">Матриця спільного голосування · % бюлетенів з обома · сортування за голосами</div>
+    <div class="tchart-wrap" style="overflow-x:auto"><canvas id="canvas-comat"></canvas></div>
+    <div id="comat-info" style="font-size:11px;color:#aaa;margin-top:5px">Наведіть на клітинку — деталі</div>
+  </div>
+
+  <div class="chart-block" style="margin-top:28px">
+    <div class="chart-label">Burst-аналіз · частка інтервалів між послідовними голосами за кандидата</div>
+    <div id="chart-burst"><div class="chart-empty">Голоси ще не завантажено</div></div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:#666;align-items:center">
+      <span><span style="display:inline-block;width:12px;height:12px;background:#e15759;border-radius:2px;vertical-align:middle"></span> &lt;30с підозрілий</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#f28e2b;border-radius:2px;vertical-align:middle"></span> 30–120с</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#a5d6a7;border-radius:2px;vertical-align:middle"></span> &gt;120с норма</span>
+    </div>
+  </div>
+
+  <div class="chart-block" style="margin-top:28px">
+    <div class="chart-label">Розмір бюлетеня по кандидатах · скільки кандидатів у бюлетені з цим кандидатом</div>
+    <div id="chart-bsizes"><div class="chart-empty">Голоси ще не завантажено</div></div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:#666;align-items:center">
+      <span><span style="display:inline-block;width:12px;height:12px;background:#e15759;border-radius:2px;vertical-align:middle"></span> 1</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#f28e2b;border-radius:2px;vertical-align:middle"></span> 2–3</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#edc948;border-radius:2px;vertical-align:middle"></span> 4–8</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#59a14f;border-radius:2px;vertical-align:middle"></span> 9–12</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#4e79a7;border-radius:2px;vertical-align:middle"></span> 13–15</span>
+    </div>
+  </div>
+
+  <div class="chart-block" style="margin-top:28px">
+    <div class="chart-label">Кумулятивні голоси · топ-15 · кроки 5 хв</div>
+    <div class="tchart-wrap"><canvas id="canvas-cum" class="tchart-canvas" style="height:220px"></canvas></div>
+    <div class="tchart-legend" id="cum-legend" style="flex-wrap:wrap;gap:6px 14px;margin-top:6px"></div>
+  </div>
 </div>
 
 <script>
@@ -1133,6 +1172,11 @@ function renderCharts() {
   renderRankChart();
   renderTimeChart();
   renderHeatmap();
+  renderPatterns();
+  renderCoMatrix();
+  renderBurstChart();
+  renderBallotSizes();
+  renderCumulative();
 }
 
 // ── Heatmap ────────────────────────────────────────────────────────────────────
@@ -1300,6 +1344,280 @@ function setupHmapInteraction() {
   });
 }
 
+// ── Патерни бюлетенів ──────────────────────────────────────────────────────────
+function renderPatterns() {
+  const el = document.getElementById('chart-patterns');
+  if (!el) return;
+  if (!BALLOTS.length) { el.innerHTML = '<div class="chart-empty">Голоси ще не завантажено</div>'; return; }
+
+  const patMap = new Map();
+  for (const b of BALLOTS) {
+    const key = [...b.v].sort((a, b) => a - b).join(',');
+    patMap.set(key, (patMap.get(key) || 0) + 1);
+  }
+  const sorted  = [...patMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25);
+  const total   = BALLOTS.length;
+  const maxCnt  = sorted[0]?.[1] || 1;
+  const recKey  = [...REC].sort((a, b) => a - b).join(',');
+  const upKey   = [...UP].sort((a, b) => a - b).join(',');
+
+  el.innerHTML = sorted.map(([key, cnt], idx) => {
+    const ids  = key.split(',').map(Number);
+    const pct  = (cnt / total * 100).toFixed(1);
+    const barW = Math.round(cnt / maxCnt * 100);
+    const tag  = key === recKey ? '<span class="badge b-rec" style="margin-left:6px">★ Д7</span>'
+               : key === upKey  ? '<span class="badge b-up"  style="margin-left:6px">УП</span>' : '';
+    const chips = ids.map(id => `<span style="display:inline-block;padding:1px 5px;margin:1px 2px;border-radius:3px;font-size:10px;background:#f0f0f0;color:#444">№${id}</span>`).join('');
+    return `<div style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+        <span style="font-size:12px;color:#bbb;min-width:20px;text-align:right">${idx+1}</span>
+        <b style="font-size:13px">${cnt}</b><span style="font-size:12px;color:#888">&nbsp;(${pct}%) · ${ids.length} канд.${tag}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="min-width:20px"></span>
+        <div style="background:#f0f4f8;border-radius:3px;height:5px;flex:1;max-width:480px;overflow:hidden">
+          <div style="width:${barW}%;background:#c8ddf5;height:100%"></div>
+        </div>
+      </div>
+      <div style="margin-top:3px;padding-left:28px">${chips}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Матриця спільного голосування ──────────────────────────────────────────────
+let comatState = null;
+
+function renderCoMatrix() {
+  const canvas = document.getElementById('canvas-comat');
+  if (!canvas || !BALLOTS.length) return;
+  canvas.style.display = 'block';
+
+  const allCands = Object.keys(C).map(Number).sort((a, b) => (VOTES[b]||0) - (VOTES[a]||0));
+  const n    = allCands.length;
+  const cidx = new Map(allCands.map((id, i) => [id, i]));
+  const comat = new Float32Array(n * n);
+  const total = BALLOTS.length;
+
+  for (const b of BALLOTS) {
+    const ids = [...b.v].filter(id => cidx.has(id));
+    for (let i = 0; i < ids.length; i++) {
+      const ci = cidx.get(ids[i]);
+      for (let j = 0; j < ids.length; j++) comat[ci * n + cidx.get(ids[j])]++;
+    }
+  }
+  comatState = { allCands, comat, n, total };
+
+  const CELL = 12, LAB = 30;
+  const cW = LAB + n * CELL, cH = LAB + n * CELL;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = cW * dpr; canvas.height = cH * dpr;
+  canvas.style.width = cW + 'px'; canvas.style.height = cH + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, cW, cH);
+
+  const colorMax = total * 0.35;
+  for (let ci = 0; ci < n; ci++) {
+    for (let cj = 0; cj < n; cj++) {
+      const v = comat[ci * n + cj];
+      if (ci === cj) { ctx.fillStyle = '#d0d8e4'; }
+      else if (!v)   { ctx.fillStyle = '#f8f8f8'; }
+      else {
+        const t = Math.min(v / colorMax, 1);
+        ctx.fillStyle = `rgb(${Math.round(232-190*t)},${Math.round(241-155*t)},${Math.round(252-52*t)})`;
+      }
+      ctx.fillRect(LAB + cj * CELL, LAB + ci * CELL, CELL - 1, CELL - 1);
+    }
+  }
+
+  ctx.fillStyle = '#aaa'; ctx.font = '8px -apple-system,sans-serif';
+  for (let ci = 0; ci < n; ci += 4) {
+    const id = allCands[ci];
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(id, LAB - 3, LAB + ci * CELL + CELL / 2);
+    ctx.save();
+    ctx.translate(LAB + ci * CELL + CELL / 2, LAB - 3);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(id, 0, 0);
+    ctx.restore();
+  }
+}
+
+function setupComatInteraction() {
+  const canvas = document.getElementById('canvas-comat');
+  const tip    = document.getElementById('hmap-tip');
+  if (!canvas || !tip) return;
+  const CELL = 12, LAB = 30;
+
+  canvas.addEventListener('mousemove', e => {
+    if (!comatState) return;
+    const { allCands, comat, n, total } = comatState;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width  / (window.devicePixelRatio || 1) / rect.width;
+    const sy = canvas.height / (window.devicePixelRatio || 1) / rect.height;
+    const ci = Math.floor(((e.clientY - rect.top)  * sy - LAB) / CELL);
+    const cj = Math.floor(((e.clientX - rect.left) * sx - LAB) / CELL);
+    if (ci < 0 || ci >= n || cj < 0 || cj >= n) { tip.style.display = 'none'; return; }
+    const idI = allCands[ci], idJ = allCands[cj];
+    const cnt = comat[ci * n + cj];
+    const pct = (cnt / total * 100).toFixed(1);
+    tip.innerHTML = ci === cj
+      ? `<b>№${idI} ${C[idI].name}</b><br>Всього: <b>${VOTES[idI]||0}</b> голосів`
+      : `<b>№${idI}</b> ${C[idI].name.split(' ')[0]}<br><b>№${idJ}</b> ${C[idJ].name.split(' ')[0]}<br>Спільних: <b>${cnt}</b> (${pct}% бюлетенів)`;
+    tip.style.display = 'block';
+    tip.style.left = (e.clientX + 16) + 'px';
+    tip.style.top  = (e.clientY - 12) + 'px';
+  });
+  canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+}
+
+// ── Burst-аналіз ──────────────────────────────────────────────────────────────
+function renderBurstChart() {
+  const el = document.getElementById('chart-burst');
+  if (!el) return;
+  if (!BALLOTS.length) { el.innerHTML = '<div class="chart-empty">Голоси ще не завантажено</div>'; return; }
+
+  const rows = Object.keys(C).map(Number)
+    .filter(id => (VOTES[id]||0) >= 3)
+    .map(id => {
+      const times = BALLOTS.filter(b => b.v.has(id)).map(b => b.ts).sort((a, b) => a - b);
+      if (times.length < 2) return null;
+      const gaps = times.slice(1).map((t, i) => t - times[i]);
+      const n = gaps.length;
+      const b30  = gaps.filter(g => g <  30000).length;
+      const b120 = gaps.filter(g => g >= 30000 && g < 120000).length;
+      return { id, p30: b30/n, p120: b120/n, pnorm: (n-b30-b120)/n, total: times.length };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.p30 - a.p30);
+
+  el.innerHTML = rows.map(r => {
+    const w30  = Math.round(r.p30   * 100);
+    const w120 = Math.round(r.p120  * 100);
+    const wnorm = 100 - w30 - w120;
+    const susp = w30 > 25;
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+      <span style="font-size:11px;${susp?'color:#bf360c;font-weight:700':'color:#444'};width:150px;text-align:right;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">№${r.id} ${C[r.id].name.split(' ')[0]}</span>
+      <div style="flex:1;height:18px;border-radius:3px;overflow:hidden;display:flex;max-width:460px">
+        ${w30   ? `<div style="width:${w30}%;background:#e15759;height:100%"></div>` : ''}
+        ${w120  ? `<div style="width:${w120}%;background:#f28e2b;height:100%"></div>` : ''}
+        ${wnorm ? `<div style="width:${wnorm}%;background:#a5d6a7;height:100%"></div>` : ''}
+      </div>
+      <span style="font-size:10px;${susp?'color:#bf360c':'color:#999'};min-width:48px">${w30}% &lt;30с</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Розмір бюлетеня ───────────────────────────────────────────────────────────
+function renderBallotSizes() {
+  const el = document.getElementById('chart-bsizes');
+  if (!el) return;
+  if (!BALLOTS.length) { el.innerHTML = '<div class="chart-empty">Голоси ще не завантажено</div>'; return; }
+
+  const B_COL = ['#e15759','#f28e2b','#edc948','#59a14f','#4e79a7'];
+  const bkt = sz => sz===1?0:sz<=3?1:sz<=8?2:sz<=12?3:4;
+
+  const rows = Object.keys(C).map(Number)
+    .filter(id => (VOTES[id]||0) > 0)
+    .sort((a, b) => (VOTES[b]||0) - (VOTES[a]||0));
+
+  el.innerHTML = rows.map(id => {
+    const bc = [0,0,0,0,0];
+    for (const b of BALLOTS) { if (b.v.has(id)) bc[bkt(b.v.size)]++; }
+    const tot = bc.reduce((s,v)=>s+v,0);
+    if (!tot) return '';
+    const segs = bc.map((cnt,i) => {
+      const w = Math.round(cnt/tot*100);
+      return w ? `<div style="width:${w}%;background:${B_COL[i]};height:100%" title="${cnt} (${w}%)"></div>` : '';
+    }).join('');
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+      <span style="font-size:11px;color:#444;width:150px;text-align:right;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">№${id} ${C[id].name.split(' ')[0]}</span>
+      <div style="flex:1;height:18px;border-radius:3px;overflow:hidden;display:flex;max-width:460px">${segs}</div>
+      <span style="font-size:10px;color:#999;min-width:30px">${tot}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Кумулятивні криві ─────────────────────────────────────────────────────────
+const CUM_COLORS = [
+  '#e15759','#4e79a7','#f28e2b','#59a14f','#edc948',
+  '#b07aa1','#76b7b2','#9c755f','#d37295','#499894',
+  '#bab0ac','#8cd17d','#b6992d','#ff9da7','#6fa8dc'
+];
+
+function renderCumulative() {
+  const canvas = document.getElementById('canvas-cum');
+  const legend = document.getElementById('cum-legend');
+  if (!canvas || !BALLOTS.length) { if (canvas) canvas.style.display='none'; return; }
+  canvas.style.display = 'block';
+
+  const top15 = Object.entries(VOTES)
+    .filter(([id]) => C[+id]).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([id])=>+id);
+
+  const W_BKT  = 5 * 60 * 1000;
+  const startMs = VOTE_START.getTime();
+  const nB = Math.ceil((VOTE_END.getTime() - startMs) / W_BKT);
+
+  const cumData = top15.map(id => {
+    const bkts = new Array(nB).fill(0);
+    for (const b of BALLOTS) {
+      if (!b.v.has(id)) continue;
+      const idx = Math.floor((b.ts - startMs) / W_BKT);
+      if (idx >= 0 && idx < nB) bkts[idx]++;
+    }
+    for (let i = 1; i < nB; i++) bkts[i] += bkts[i-1];
+    return bkts;
+  });
+  const maxV = Math.max(...cumData.map(d => d[nB-1]), 1);
+
+  const dpr = window.devicePixelRatio || 1;
+  const cW  = canvas.offsetWidth || 800;
+  const cH  = 220;
+  canvas.width = cW*dpr; canvas.height = cH*dpr;
+  canvas.style.height = cH+'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const PL=44, PR=8, PT=10, PB=26;
+  const chartW=cW-PL-PR, chartH=cH-PT-PB;
+  ctx.clearRect(0,0,cW,cH);
+
+  ctx.strokeStyle='#f0f0f0'; ctx.lineWidth=1;
+  ctx.fillStyle='#ccc'; ctx.font='9px -apple-system,sans-serif'; ctx.textAlign='right';
+  for (let g=1;g<=4;g++) {
+    const y=PT+chartH*(1-g/4);
+    ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(PL+chartW,y); ctx.stroke();
+    ctx.fillText(Math.round(maxV*g/4), PL-3, y+3);
+  }
+  ctx.strokeStyle='#e0e0e0';
+  ctx.beginPath(); ctx.moveTo(PL,PT+chartH); ctx.lineTo(PL+chartW,PT+chartH); ctx.stroke();
+
+  for (let li=0; li<top15.length; li++) {
+    ctx.strokeStyle=CUM_COLORS[li]; ctx.lineWidth=1.5; ctx.lineJoin='round';
+    ctx.beginPath();
+    for (let bi=0; bi<nB; bi++) {
+      const x=PL+bi/(nB-1)*chartW;
+      const y=PT+chartH*(1-cumData[li][bi]/maxV);
+      bi===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+
+  ctx.fillStyle='#aaa'; ctx.font='10px -apple-system,sans-serif'; ctx.textAlign='center';
+  for (let h=0; h<=12; h++) {
+    const bi=h*12;
+    if (bi<nB) ctx.fillText(`${9+h}:00`, PL+bi/(nB-1)*chartW, cH-8);
+  }
+
+  if (legend) {
+    legend.innerHTML = top15.map((id,li) => {
+      const nm=C[id].name.split(' ');
+      return `<span><span class="tleg-dot" style="background:${CUM_COLORS[li]}"></span>№${id} ${nm[0]}</span>`;
+    }).join('');
+  }
+}
+
 function renderRankChart() {
   const el = document.getElementById('chart-rank');
   if (!el) return;
@@ -1433,7 +1751,7 @@ function renderTimeChart() {
   }
 }
 
-window.addEventListener('resize', () => { if (chartsVisible) { renderTimeChart(); renderHeatmap(); } });
+window.addEventListener('resize', () => { if (chartsVisible) { renderTimeChart(); renderHeatmap(); renderCumulative(); } });
 
 function setSort(s, btn) {
   if (sort === s) { sort = 'num'; btn.classList.remove('active'); }
@@ -1741,6 +2059,7 @@ document.getElementById('btn-warn').textContent = `Є питання (${warnCoun
 render();
 loadVotes();
 setupHmapInteraction();
+setupComatInteraction();
 setInterval(loadVotes, 3 * 60 * 1000);
 
 // Anchor link on load
