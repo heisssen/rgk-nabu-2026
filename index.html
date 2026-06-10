@@ -1249,13 +1249,22 @@ function setSort(s, btn) {
 async function loadVotes() {
   nextRefreshAt = Date.now() + 3 * 60 * 1000;
   try {
-    const r = await fetch('./protocol.txt?_=' + Date.now());
-    if (!r.ok) {
-      votesFetchError = r.status === 404 ? null : `Помилка HTTP ${r.status}`;
-      updateVotesBar();
-      return;
+    const DIRECT = 'https://voting.nabu.gov.ua/public/protocol.txt';
+    const PROXY  = 'https://corsproxy.io/?' + encodeURIComponent(DIRECT);
+    const bust   = '&_=' + Date.now();
+
+    let text = null;
+    // 1) локальний файл (якщо Actions синхронізував)
+    try {
+      const r0 = await fetch('./protocol.txt?_=' + Date.now());
+      if (r0.ok) text = await r0.text();
+    } catch(_) {}
+    // 2) CORS-проксі
+    if (!text) {
+      const r1 = await fetch(PROXY + bust);
+      if (!r1.ok) throw new Error('HTTP ' + r1.status);
+      text = await r1.text();
     }
-    const text = await r.text();
     PREV_RANK = getRankMap(VOTES);
     VOTES = {}; BALLOTS = [];
     votesTotal = 0;
