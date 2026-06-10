@@ -1249,7 +1249,7 @@ function setSort(s, btn) {
 async function loadVotes() {
   nextRefreshAt = Date.now() + 3 * 60 * 1000;
   try {
-    const r = await fetch('https://voting.nabu.gov.ua/public/protocol.txt?_=' + Date.now());
+    const r = await fetch('./protocol.txt?_=' + Date.now());
     if (!r.ok) {
       votesFetchError = r.status === 404 ? null : `Помилка HTTP ${r.status}`;
       updateVotesBar();

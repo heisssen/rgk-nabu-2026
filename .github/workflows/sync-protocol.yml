@@ -1,0 +1,24 @@
+name: Sync protocol.txt
+
+on:
+  schedule:
+    - cron: '*/3 * * * *'   # кожні 3 хвилини
+  workflow_dispatch:         # ручний запуск
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download protocol.txt
+        run: curl -fsSL https://voting.nabu.gov.ua/public/protocol.txt -o protocol.txt
+
+      - name: Commit if changed
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add protocol.txt
+          git diff --staged --quiet || git commit -m 'sync: protocol.txt' && git push
