@@ -1249,7 +1249,7 @@ function setSort(s, btn) {
 async function loadVotes() {
   nextRefreshAt = Date.now() + 3 * 60 * 1000;
   try {
-    const r = await fetch('./protocol.txt?_=' + Date.now());
+    const r = await fetch('https://voting.nabu.gov.ua/public/protocol.txt?_=' + Date.now());
     if (!r.ok) {
       votesFetchError = r.status === 404 ? null : `Помилка HTTP ${r.status}`;
       updateVotesBar();
@@ -1264,8 +1264,7 @@ async function loadVotes() {
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
       const parts = line.split('\t');
-      const tsRaw = parseInt(parts[0]) || 0;
-      const tsMs  = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
+      const tsMs  = parts[0] ? new Date(parts[0].replace(' ', 'T') + '+03:00').getTime() : 0;
       const ip    = parts[1] || '';
       let v = null, hash = null;
       for (const part of parts) {
