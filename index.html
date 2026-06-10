@@ -1249,21 +1249,11 @@ function setSort(s, btn) {
 async function loadVotes() {
   nextRefreshAt = Date.now() + 3 * 60 * 1000;
   try {
-    const ts     = Date.now();
-    const DIRECT = 'https://voting.nabu.gov.ua/public/protocol.txt?_=' + ts;
-    const PROXIES = [
-      'https://corsproxy.io/?' + DIRECT,
-      'https://api.allorigins.win/raw?url=' + encodeURIComponent(DIRECT),
-    ];
-
-    let text = null;
-    for (const url of PROXIES) {
-      try {
-        const r = await fetch(url, { cache: 'no-store' });
-        if (r.ok) { text = await r.text(); break; }
-      } catch(_) {}
-    }
-    if (!text) throw new Error('Всі джерела недоступні');
+    // raw.githubusercontent.com роздає публічні файли з CORS *
+    const raw = 'https://raw.githubusercontent.com/heisssen/rgk-nabu-2026/master/protocol.txt?_=' + Date.now();
+    const r = await fetch(raw, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const text = await r.text();
     PREV_RANK = getRankMap(VOTES);
     VOTES = {}; BALLOTS = [];
     votesTotal = 0;
