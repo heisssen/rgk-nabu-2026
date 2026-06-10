@@ -1283,7 +1283,8 @@ async function loadVotes() {
     votesLastFetched = new Date();
     votesFetchError = null;
   } catch(e) {
-    votesFetchError = 'Помилка завантаження';
+    votesFetchError = 'Помилка: ' + (e.message || e);
+    console.error('[votes]', e);
   }
   applyVotes();
   if (sort === 'votes') render();
