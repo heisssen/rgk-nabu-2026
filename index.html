@@ -321,6 +321,20 @@ header {
 
 .chart-empty { color: #bbb; font-size: 13px; padding: 24px 0; }
 
+#hmap-tip {
+  position: fixed; z-index: 200;
+  background: rgba(20,20,20,0.92); color: #fff;
+  font-size: 12px; padding: 7px 11px; border-radius: 6px;
+  pointer-events: none; display: none;
+  white-space: nowrap; line-height: 1.6;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+}
+#canvas-hmap { cursor: pointer; display: block; }
+
+.hmap-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; color: #666; align-items: center; }
+.hmap-legend span { display: flex; align-items: center; gap: 5px; }
+.hleg-box { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+
 @media (max-width: 700px) {
   .cbar-meta { flex: 0 0 120px; }
 }
@@ -372,6 +386,7 @@ header {
   <button class="votes-refresh-btn" onclick="loadVotes()">↻ Оновити</button>
 </div>
 <button id="scroll-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Вгору">↑</button>
+<div id="hmap-tip"></div>
 <div class="count" id="count">44 кандидати</div>
 <div class="list" id="list"></div>
 <div id="charts" style="display:none">
@@ -387,11 +402,17 @@ header {
     <div class="tchart-legend" id="tchart-legend"></div>
   </div>
   <div class="chart-block" style="margin-top:28px">
-    <div class="chart-label">Стек по кандидатах · топ-15 · вікна 10 хв</div>
-    <div class="tchart-wrap">
-      <canvas id="canvas-stack" class="tchart-canvas" style="height:200px"></canvas>
+    <div class="chart-label">Хітмап по кандидатах · усі 44 · вікна 10 хв · <span style="color:#bf360c">⚡ = сплеск (&gt;μ+2σ)</span></div>
+    <div class="tchart-wrap" style="overflow-x:auto">
+      <canvas id="canvas-hmap"></canvas>
     </div>
-    <div class="tchart-legend" id="stack-legend" style="flex-wrap:wrap;gap:8px 16px;margin-top:8px"></div>
+    <div class="hmap-legend">
+      <span><span class="hleg-box" style="background:#e8f1fb"></span>мало</span>
+      <span><span class="hleg-box" style="background:#5b9bd5"></span>норма</span>
+      <span><span class="hleg-box" style="background:#1a4a8a"></span>багато</span>
+      <span><span class="hleg-box" style="background:#e15000"></span>⚡ сплеск (&gt;μ+2σ)</span>
+      <span style="color:#aaa">· натисніть на рядок → перейти до кандидата</span>
+    </div>
   </div>
 </div>
 
@@ -1111,100 +1132,172 @@ function toggleCharts(btn) {
 function renderCharts() {
   renderRankChart();
   renderTimeChart();
-  renderStackChart();
+  renderHeatmap();
 }
 
-const STACK_COLORS = [
-  '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f',
-  '#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
-  '#d37295','#fabfd2','#8cd17d','#b6992d','#499894'
-];
+// ── Heatmap ────────────────────────────────────────────────────────────────────
+const HMAP_LW = 148; // label width
+const HMAP_CW = 9;   // cell width
+const HMAP_TW = 44;  // total-votes column width
+const HMAP_RH = 22;  // row height
+let   hmapState = null;
 
-function renderStackChart() {
-  const canvas = document.getElementById('canvas-stack');
-  const legend = document.getElementById('stack-legend');
-  if (!canvas) return;
-  if (!BALLOTS.length) {
-    canvas.style.display = 'none';
-    if (legend) legend.innerHTML = '';
-    return;
+function hmapColor(t, isSpike) {
+  if (isSpike) {
+    const r = Math.min(255, Math.round(190 + 65 * t));
+    const g = Math.round(55 * (1 - t));
+    return `rgb(${r},${g},10)`;
   }
+  return `rgb(${Math.round(232-190*t)},${Math.round(241-155*t)},${Math.round(252-52*t)})`;
+}
+
+function detectRowSpikes(row) {
+  const nz = row.filter(v => v > 0);
+  if (nz.length < 3) return new Set();
+  const mean = nz.reduce((s, v) => s + v, 0) / nz.length;
+  const std  = Math.sqrt(nz.reduce((s, v) => s + (v - mean) ** 2, 0) / nz.length);
+  const thr  = mean + Math.max(2 * std, mean * 1.2, 3);
+  const out  = new Set();
+  row.forEach((v, i) => { if (v >= thr) out.add(i); });
+  return out;
+}
+
+function renderHeatmap() {
+  const canvas = document.getElementById('canvas-hmap');
+  if (!canvas) return;
+  if (!BALLOTS.length) { canvas.style.display = 'none'; return; }
   canvas.style.display = 'block';
 
-  const topCands = Object.entries(VOTES)
-    .filter(([id]) => C[+id])
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 15)
-    .map(([id]) => +id);
+  const allCands = Object.keys(C).map(Number)
+    .sort((a, b) => (VOTES[b] || 0) - (VOTES[a] || 0));
 
   const W        = 10 * 60 * 1000;
   const startMs  = VOTE_START.getTime();
-  const endMs    = VOTE_END.getTime();
-  const nBuckets = Math.ceil((endMs - startMs) / W);
+  const nBuckets = Math.ceil((VOTE_END.getTime() - startMs) / W);
 
-  const buckets = Array.from({length: nBuckets}, () => new Array(topCands.length).fill(0));
-  for (const b of BALLOTS) {
-    const idx = Math.floor((b.ts - startMs) / W);
-    if (idx < 0 || idx >= nBuckets) continue;
-    for (let ci = 0; ci < topCands.length; ci++) {
-      if (b.v.has(topCands[ci])) buckets[idx][ci]++;
+  const grid = allCands.map(id => {
+    const row = new Array(nBuckets).fill(0);
+    for (const b of BALLOTS) {
+      if (!b.v.has(id)) continue;
+      const idx = Math.floor((b.ts - startMs) / W);
+      if (idx >= 0 && idx < nBuckets) row[idx]++;
     }
-  }
-  const stackTotals = buckets.map(b => b.reduce((s, v) => s + v, 0));
-  const maxStack    = Math.max(...stackTotals, 1);
+    return row;
+  });
 
-  const dpr  = window.devicePixelRatio || 1;
-  const cW   = canvas.offsetWidth  || 800;
-  const cH   = canvas.offsetHeight || 200;
-  canvas.width  = cW * dpr;
-  canvas.height = cH * dpr;
+  const spikes = grid.map(detectRowSpikes);
+  hmapState = { allCands, grid, spikes, nBuckets, startMs };
+
+  const canvasW = HMAP_LW + nBuckets * HMAP_CW + HMAP_TW;
+  const canvasH = allCands.length * HMAP_RH + 28;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = canvasW * dpr;
+  canvas.height = canvasH * dpr;
+  canvas.style.width  = canvasW + 'px';
+  canvas.style.height = canvasH + 'px';
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, canvasW, canvasH);
 
-  const PL = 4, PR = 4, PT = 10, PB = 26;
-  const chartW = cW - PL - PR;
-  const chartH = cH - PT - PB;
-  const bw = chartW / nBuckets;
+  for (let ci = 0; ci < allCands.length; ci++) {
+    const id    = allCands[ci];
+    const row   = grid[ci];
+    const spy   = spikes[ci];
+    const maxV  = Math.max(...row, 1);
+    const y0    = ci * HMAP_RH;
+    const total = VOTES[id] || 0;
+    const hasSpy = spy.size > 0;
 
-  ctx.clearRect(0, 0, cW, cH);
+    ctx.fillStyle = ci % 2 === 0 ? '#fafafa' : '#f3f3f3';
+    ctx.fillRect(0, y0, canvasW, HMAP_RH);
 
-  ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 1;
-  for (let g = 1; g <= 4; g++) {
-    const y = PT + chartH - chartH * g / 4;
-    ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(PL + chartW, y); ctx.stroke();
-  }
-  ctx.strokeStyle = '#e0e0e0';
-  ctx.beginPath(); ctx.moveTo(PL, PT + chartH); ctx.lineTo(PL + chartW, PT + chartH); ctx.stroke();
+    ctx.font = `${hasSpy ? 'bold ' : ''}11px -apple-system,BlinkMacSystemFont,sans-serif`;
+    ctx.fillStyle = hasSpy ? '#bf360c' : '#444';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`№${id} ${C[id].name.split(' ')[0]}`, HMAP_LW - 6, y0 + HMAP_RH / 2);
 
-  for (let i = 0; i < nBuckets; i++) {
-    if (!stackTotals[i]) continue;
-    let yOff = 0;
-    for (let ci = 0; ci < topCands.length; ci++) {
-      if (!buckets[i][ci]) continue;
-      const h = Math.max(1, Math.round(buckets[i][ci] / maxStack * chartH));
-      const x = PL + i * bw;
-      const y = PT + chartH - yOff - h;
-      ctx.fillStyle = STACK_COLORS[ci % STACK_COLORS.length];
-      ctx.fillRect(x + 0.5, y, Math.max(bw - 1, 1), h);
-      yOff += h;
+    for (let bi = 0; bi < nBuckets; bi++) {
+      const v = row[bi];
+      if (!v) continue;
+      ctx.fillStyle = hmapColor(v / maxV, spy.has(bi));
+      ctx.fillRect(HMAP_LW + bi * HMAP_CW + 1, y0 + 2, HMAP_CW - 1, HMAP_RH - 4);
+    }
+
+    if (total > 0) {
+      ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
+      ctx.fillStyle = '#999';
+      ctx.textAlign = 'left';
+      ctx.fillText(total, HMAP_LW + nBuckets * HMAP_CW + 4, y0 + HMAP_RH / 2);
     }
   }
 
+  // Separator line between cells and totals
+  ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(HMAP_LW + nBuckets * HMAP_CW + 1, 0);
+  ctx.lineTo(HMAP_LW + nBuckets * HMAP_CW + 1, canvasH - 28);
+  ctx.stroke();
+
+  // Time axis
   ctx.fillStyle = '#aaa';
-  ctx.font = `10px -apple-system,BlinkMacSystemFont,sans-serif`;
+  ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
   ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
   for (let h = 0; h <= 12; h++) {
     const bi = h * 6;
-    if (bi <= nBuckets) ctx.fillText(`${9 + h}:00`, PL + bi * bw, cH - 6);
+    if (bi <= nBuckets) ctx.fillText(`${9 + h}:00`, HMAP_LW + bi * HMAP_CW, canvasH - 8);
+  }
+}
+
+function setupHmapInteraction() {
+  const canvas = document.getElementById('canvas-hmap');
+  const tip    = document.getElementById('hmap-tip');
+  if (!canvas || !tip) return;
+
+  function getCell(e) {
+    if (!hmapState) return null;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width  / (window.devicePixelRatio || 1) / rect.width;
+    const sy = canvas.height / (window.devicePixelRatio || 1) / rect.height;
+    const mx = (e.clientX - rect.left) * sx;
+    const my = (e.clientY - rect.top)  * sy;
+    const ci = Math.floor(my / HMAP_RH);
+    const bi = Math.floor((mx - HMAP_LW) / HMAP_CW);
+    const { allCands, nBuckets } = hmapState;
+    if (ci < 0 || ci >= allCands.length || bi < 0 || bi >= nBuckets) return null;
+    return { ci, bi };
   }
 
-  if (legend) {
-    legend.innerHTML = topCands.map((id, ci) => {
-      const parts = C[id].name.split(' ');
-      const short = parts[0] + (parts[1] ? ' ' + parts[1][0] + '.' : '');
-      return `<span><span class="tleg-dot" style="background:${STACK_COLORS[ci]}"></span>№${id} ${short}</span>`;
-    }).join('');
-  }
+  canvas.addEventListener('mousemove', e => {
+    const cell = getCell(e);
+    if (!cell) { tip.style.display = 'none'; return; }
+    const { ci, bi } = cell;
+    const { allCands, grid, spikes, nBuckets } = hmapState;
+    const id = allCands[ci];
+    const v  = grid[ci][bi];
+    const isSp = spikes[ci].has(bi);
+    const h0 = 9 + Math.floor(bi * 10 / 60);
+    const m0 = (bi * 10) % 60;
+    const h1 = 9 + Math.floor(((bi + 1) * 10) / 60);
+    const m1 = ((bi + 1) * 10) % 60;
+    const t  = `${h0}:${String(m0).padStart(2,'0')}–${h1}:${String(m1).padStart(2,'0')}`;
+    tip.innerHTML = `<b>№${id} ${C[id].name}</b><br>${t} · <b>${v || 0}</b> гол.${isSp ? ' &nbsp;<span style="color:#ffb74d">⚡ сплеск</span>' : ''}`;
+    tip.style.display = 'block';
+    tip.style.left = (e.clientX + 16) + 'px';
+    tip.style.top  = (e.clientY - 12) + 'px';
+  });
+
+  canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+
+  canvas.addEventListener('click', e => {
+    const cell = getCell(e);
+    if (!cell) return;
+    const id = hmapState.allCands[cell.ci];
+    if (chartsVisible) toggleCharts(document.getElementById('btn-charts'));
+    const el = document.getElementById('i' + id);
+    if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+  });
 }
 
 function renderRankChart() {
@@ -1340,7 +1433,7 @@ function renderTimeChart() {
   }
 }
 
-window.addEventListener('resize', () => { if (chartsVisible) { renderTimeChart(); renderStackChart(); } });
+window.addEventListener('resize', () => { if (chartsVisible) { renderTimeChart(); renderHeatmap(); } });
 
 function setSort(s, btn) {
   if (sort === s) { sort = 'num'; btn.classList.remove('active'); }
@@ -1647,6 +1740,7 @@ document.getElementById('btn-warn').textContent = `Є питання (${warnCoun
 
 render();
 loadVotes();
+setupHmapInteraction();
 setInterval(loadVotes, 3 * 60 * 1000);
 
 // Anchor link on load
