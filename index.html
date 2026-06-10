@@ -453,6 +453,22 @@ header {
     <div class="tchart-wrap"><canvas id="canvas-cum" class="tchart-canvas" style="height:220px"></canvas></div>
     <div class="tchart-legend" id="cum-legend" style="flex-wrap:wrap;gap:6px 14px;margin-top:6px"></div>
   </div>
+
+  <div class="chart-block" style="margin-top:28px">
+    <div class="chart-label">Мережевий граф спільного голосування · вузол = кандидат · ребро = спільні бюлетені</div>
+    <div class="tchart-wrap"><canvas id="canvas-net" style="display:block;width:100%;height:500px"></canvas></div>
+    <div style="font-size:11px;color:#aaa;margin-top:5px">Розмір вузла = голоси · товщина ребра = сила зв'язку · клік → до кандидата
+      &nbsp;·&nbsp; <span style="color:#c8860a">■</span> Д7
+      <span style="color:#6a3da8">■</span> УП
+      <span style="color:#f28e2b">■</span> ⚡накрутка
+      <span style="color:#4e79a7">■</span> інші
+    </div>
+  </div>
+
+  <div class="chart-block" style="margin-top:28px">
+    <div class="chart-label">Прогноз до 21:00 · на основі темпу останньої години</div>
+    <div id="chart-forecast"><div class="chart-empty">Голоси ще не завантажено</div></div>
+  </div>
 </div>
 
 <script>
@@ -1050,7 +1066,7 @@ function render() {
     if (c.rgk)        bgs.push(`<span class="badge b-rgk">✓ Чинний РГК</span>`);
     if (UP.includes(i)) bgs.push(`<span class="badge b-up">УП</span>`);
 
-    let det = `<div id="fd${i}"></div><a class="pdf-link" href="${c.pdf}" target="_blank" onclick="event.stopPropagation()">📄 PDF-документи кандидата</a>`;
+    let det = `<div id="fd${i}"></div><canvas id="spark${i}" style="display:block;width:100%;height:44px;margin:8px 0 2px"></canvas><a class="pdf-link" href="${c.pdf}" target="_blank" onclick="event.stopPropagation()">📄 PDF-документи кандидата</a>`;
 
     if (c.bio) {
       det += `<div class="section">
@@ -1113,6 +1129,7 @@ function toggle(i) {
       if (item.classList.contains('open')) det.style.maxHeight = 'none';
     }, { once: true });
     history.replaceState(null, '', '#i' + i);
+    requestAnimationFrame(() => renderSparkline(i));
   }
 }
 
@@ -1177,7 +1194,246 @@ function renderCharts() {
   renderBurstChart();
   renderBallotSizes();
   renderCumulative();
+  renderNetworkGraph();
+  renderForecast();
 }
+
+// ── Sparkline на картці ────────────────────────────────────────────────────────
+function renderSparkline(id) {
+  const canvas = document.getElementById('spark' + id);
+  if (!canvas || !BALLOTS.length) return;
+  const W_BKT = 10 * 60 * 1000;
+  const startMs = VOTE_START.getTime();
+  const nB = Math.ceil((VOTE_END.getTime() - startMs) / W_BKT);
+  const bkts = new Array(nB).fill(0);
+  for (const b of BALLOTS) {
+    if (!b.v.has(id)) continue;
+    const idx = Math.floor((b.ts - startMs) / W_BKT);
+    if (idx >= 0 && idx < nB) bkts[idx]++;
+  }
+  if (!bkts.some(v => v > 0)) return;
+  const maxV = Math.max(...bkts, 1);
+  const spy  = detectRowSpikes(bkts);
+  const dpr  = window.devicePixelRatio || 1;
+  const cW   = canvas.offsetWidth || 400;
+  const cH   = 44;
+  canvas.width = cW * dpr; canvas.height = cH * dpr;
+  canvas.style.height = cH + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, cW, cH);
+  const bw = cW / nB;
+  const PT = 2, PB = 14, chartH = cH - PT - PB;
+  for (let bi = 0; bi < nB; bi++) {
+    if (!bkts[bi]) continue;
+    const h = Math.max(2, Math.round(bkts[bi] / maxV * chartH));
+    ctx.fillStyle = spy.has(bi) ? '#e15759' : '#c8ddf5';
+    ctx.fillRect(bi * bw + 0.5, PT + chartH - h, Math.max(bw - 1, 1), h);
+  }
+  ctx.fillStyle = '#ccc'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+  for (let h = 0; h <= 12; h += 3) {
+    const bi = h * 6;
+    if (bi < nB) ctx.fillText(`${9+h}ч`, bi * bw, cH - 3);
+  }
+}
+
+// ── Мережевий граф ─────────────────────────────────────────────────────────────
+let graphState = null;
+
+function forceLayout(nodes, edges, W, H) {
+  for (const n of nodes) {
+    n.x = W / 2 + (Math.random() - 0.5) * W * 0.6;
+    n.y = H / 2 + (Math.random() - 0.5) * H * 0.6;
+    n.vx = 0; n.vy = 0;
+  }
+  for (let iter = 0; iter < 450; iter++) {
+    for (const n of nodes) { n.fx = 0; n.fy = 0; }
+    // Repulsion
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d2 = dx*dx + dy*dy + 1;
+        const d  = Math.sqrt(d2);
+        const f  = 3800 / d2;
+        a.fx += f*dx/d; a.fy += f*dy/d;
+        b.fx -= f*dx/d; b.fy -= f*dy/d;
+      }
+    }
+    // Springs
+    for (const e of edges) {
+      const a = nodes[e.i], b = nodes[e.j];
+      const dx = b.x-a.x, dy = b.y-a.y;
+      const d  = Math.sqrt(dx*dx+dy*dy) + 0.1;
+      const f  = 0.018 * (d - 90) * e.w;
+      a.fx += f*dx/d; a.fy += f*dy/d;
+      b.fx -= f*dx/d; b.fy -= f*dy/d;
+    }
+    // Center gravity
+    for (const n of nodes) {
+      n.fx += 0.006 * (W/2 - n.x);
+      n.fy += 0.006 * (H/2 - n.y);
+    }
+    // Integrate
+    for (const n of nodes) {
+      n.vx = (n.vx + n.fx) * 0.86;
+      n.vy = (n.vy + n.fy) * 0.86;
+      n.x = Math.max(20, Math.min(W-20, n.x + n.vx));
+      n.y = Math.max(20, Math.min(H-20, n.y + n.vy));
+    }
+  }
+}
+
+function renderNetworkGraph() {
+  const canvas = document.getElementById('canvas-net');
+  if (!canvas || !BALLOTS.length) return;
+
+  const allCands = Object.keys(C).map(Number).filter(id => (VOTES[id]||0) > 0);
+  const n    = allCands.length;
+  const cidx = new Map(allCands.map((id,i) => [id,i]));
+  const comat = new Float32Array(n*n);
+  const total = BALLOTS.length;
+  for (const b of BALLOTS) {
+    const ids = [...b.v].filter(id => cidx.has(id));
+    for (let i=0;i<ids.length;i++) {
+      const ci = cidx.get(ids[i]);
+      for (let j=0;j<ids.length;j++) comat[ci*n+cidx.get(ids[j])]++;
+    }
+  }
+
+  const dpr = window.devicePixelRatio || 1;
+  const cW  = canvas.offsetWidth || 700;
+  const cH  = 500;
+  canvas.width  = cW*dpr; canvas.height = cH*dpr;
+  canvas.style.height = cH+'px';
+
+  const maxV = Math.max(...allCands.map(id => VOTES[id]||0), 1);
+  const nodes = allCands.map((id,i) => ({
+    id, i,
+    r: 5 + Math.sqrt((VOTES[id]||0)/maxV) * 20,
+  }));
+
+  const THR = total * 0.07;
+  const edges = [];
+  for (let i=0;i<n;i++) for (let j=i+1;j<n;j++) {
+    const v = comat[i*n+j];
+    if (v >= THR) edges.push({i, j, w: v/total});
+  }
+
+  forceLayout(nodes, edges, cW, cH);
+  graphState = { nodes, allCands };
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, cW, cH);
+
+  // Edges
+  for (const e of edges) {
+    const a = nodes[e.i], b = nodes[e.j];
+    ctx.strokeStyle = `rgba(100,149,200,${Math.min(e.w*3.5, 0.75)})`;
+    ctx.lineWidth   = Math.max(0.5, e.w * 9);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+
+  // Nodes
+  for (const nd of nodes) {
+    const id = nd.id;
+    const color = FRAUD[id]  ? '#f28e2b'
+                : REC.includes(id) ? '#c8860a'
+                : UP.includes(id)  ? '#6a3da8'
+                : '#4e79a7';
+    ctx.beginPath(); ctx.arc(nd.x, nd.y, nd.r, 0, Math.PI*2);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${nd.r > 11 ? 9 : 7}px -apple-system,sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(id, nd.x, nd.y);
+  }
+}
+
+function setupGraphInteraction() {
+  const canvas = document.getElementById('canvas-net');
+  const tip    = document.getElementById('hmap-tip');
+  if (!canvas || !tip) return;
+
+  function hitNode(e) {
+    if (!graphState) return null;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width  / (window.devicePixelRatio||1) / rect.width;
+    const sy = canvas.height / (window.devicePixelRatio||1) / rect.height;
+    const mx = (e.clientX-rect.left)*sx, my = (e.clientY-rect.top)*sy;
+    for (const nd of graphState.nodes) {
+      const dx=mx-nd.x, dy=my-nd.y;
+      if (dx*dx+dy*dy <= nd.r*nd.r) return nd;
+    }
+    return null;
+  }
+
+  canvas.addEventListener('mousemove', e => {
+    const nd = hitNode(e);
+    if (!nd) { tip.style.display='none'; return; }
+    const id=nd.id;
+    tip.innerHTML = `<b>№${id} ${C[id].name}</b><br>${C[id].ngo}<br>Голосів: <b>${VOTES[id]||0}</b>`;
+    tip.style.display='block';
+    tip.style.left=(e.clientX+16)+'px'; tip.style.top=(e.clientY-12)+'px';
+  });
+  canvas.addEventListener('mouseleave', () => { tip.style.display='none'; });
+  canvas.addEventListener('click', e => {
+    const nd = hitNode(e);
+    if (!nd) return;
+    if (chartsVisible) toggleCharts(document.getElementById('btn-charts'));
+    const el = document.getElementById('i'+nd.id);
+    if (el) setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'center'}),60);
+  });
+}
+
+// ── Прогноз ────────────────────────────────────────────────────────────────────
+function renderForecast() {
+  const el = document.getElementById('chart-forecast');
+  if (!el) return;
+  if (!BALLOTS.length) { el.innerHTML='<div class="chart-empty">Голоси ще не завантажено</div>'; return; }
+
+  const now  = Date.now();
+  const endMs = VOTE_END.getTime();
+  if (now >= endMs) { el.innerHTML='<div class="chart-empty">Голосування завершено</div>'; return; }
+
+  const remaining = endMs - now;
+  const WIN = 60 * 60 * 1000; // остання година
+  const actual = Math.min(WIN, now - VOTE_START.getTime());
+  const recent = BALLOTS.filter(b => b.ts >= now - WIN);
+
+  const rows = Object.keys(C).map(Number)
+    .filter(id => (VOTES[id]||0) > 0)
+    .map(id => {
+      const cnt  = recent.filter(b => b.v.has(id)).length;
+      const gain = Math.round(cnt / actual * remaining);
+      return { id, cur: VOTES[id]||0, gain, pred: (VOTES[id]||0) + gain };
+    })
+    .sort((a, b) => b.pred - a.pred);
+
+  const maxPred = rows[0]?.pred || 1;
+  const remH = (remaining / 3600000).toFixed(1);
+
+  el.innerHTML = `<div style="font-size:12px;color:#888;margin-bottom:12px">Залишилось ~${remH} год · темп за останню годину</div>`
+    + rows.map((r, i) => {
+      const wC = Math.round(r.cur  / maxPred * 100);
+      const wG = Math.round(r.gain / maxPred * 100);
+      const nm = C[r.id].name.split(' ')[0];
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+        <span style="font-size:11px;color:#bbb;min-width:18px;text-align:right">${i+1}</span>
+        <span style="font-size:11px;color:#444;width:130px;text-align:right;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${REC.includes(r.id)?'★ ':''}№${r.id} ${nm}</span>
+        <div style="flex:1;height:18px;border-radius:3px;overflow:hidden;display:flex;max-width:460px;background:#f5f5f5">
+          <div style="width:${wC}%;background:#a5d6a7;height:100%"></div>
+          <div style="width:${wG}%;background:#c8ddf5;height:100%"></div>
+        </div>
+        <span style="font-size:10px;color:#888;min-width:100px">${r.cur} <b style="color:#5b9bd5">+${r.gain}</b> → <b>${r.pred}</b></span>
+      </div>`;
+    }).join('')
+    + `<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:#666;align-items:center">
+        <span><span style="display:inline-block;width:12px;height:12px;background:#a5d6a7;border-radius:2px;vertical-align:middle"></span> зараз</span>
+        <span><span style="display:inline-block;width:12px;height:12px;background:#c8ddf5;border-radius:2px;vertical-align:middle"></span> прогноз</span>
+       </div>`;
 
 // ── Heatmap ────────────────────────────────────────────────────────────────────
 const HMAP_LW = 148; // label width
@@ -1751,7 +2007,7 @@ function renderTimeChart() {
   }
 }
 
-window.addEventListener('resize', () => { if (chartsVisible) { renderTimeChart(); renderHeatmap(); renderCumulative(); } });
+window.addEventListener('resize', () => { if (chartsVisible) { renderTimeChart(); renderHeatmap(); renderCumulative(); renderNetworkGraph(); } });
 
 function setSort(s, btn) {
   if (sort === s) { sort = 'num'; btn.classList.remove('active'); }
@@ -1975,6 +2231,11 @@ function applyVotes() {
 
   updateVotesBar();
   if (chartsVisible) renderCharts();
+  // Оновити sparkline для відкритих карток
+  document.querySelectorAll('.item.open').forEach(el => {
+    const id = parseInt(el.id.slice(1));
+    if (id) renderSparkline(id);
+  });
 }
 
 function updateVotesBar() {
@@ -2060,6 +2321,7 @@ render();
 loadVotes();
 setupHmapInteraction();
 setupComatInteraction();
+setupGraphInteraction();
 setInterval(loadVotes, 3 * 60 * 1000);
 
 // Anchor link on load
