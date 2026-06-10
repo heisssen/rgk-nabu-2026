@@ -386,6 +386,13 @@ header {
     </div>
     <div class="tchart-legend" id="tchart-legend"></div>
   </div>
+  <div class="chart-block" style="margin-top:28px">
+    <div class="chart-label">Стек по кандидатах · топ-15 · вікна 10 хв</div>
+    <div class="tchart-wrap">
+      <canvas id="canvas-stack" class="tchart-canvas" style="height:200px"></canvas>
+    </div>
+    <div class="tchart-legend" id="stack-legend" style="flex-wrap:wrap;gap:8px 16px;margin-top:8px"></div>
+  </div>
 </div>
 
 <script>
@@ -1104,6 +1111,100 @@ function toggleCharts(btn) {
 function renderCharts() {
   renderRankChart();
   renderTimeChart();
+  renderStackChart();
+}
+
+const STACK_COLORS = [
+  '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f',
+  '#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
+  '#d37295','#fabfd2','#8cd17d','#b6992d','#499894'
+];
+
+function renderStackChart() {
+  const canvas = document.getElementById('canvas-stack');
+  const legend = document.getElementById('stack-legend');
+  if (!canvas) return;
+  if (!BALLOTS.length) {
+    canvas.style.display = 'none';
+    if (legend) legend.innerHTML = '';
+    return;
+  }
+  canvas.style.display = 'block';
+
+  const topCands = Object.entries(VOTES)
+    .filter(([id]) => C[+id])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([id]) => +id);
+
+  const W        = 10 * 60 * 1000;
+  const startMs  = VOTE_START.getTime();
+  const endMs    = VOTE_END.getTime();
+  const nBuckets = Math.ceil((endMs - startMs) / W);
+
+  const buckets = Array.from({length: nBuckets}, () => new Array(topCands.length).fill(0));
+  for (const b of BALLOTS) {
+    const idx = Math.floor((b.ts - startMs) / W);
+    if (idx < 0 || idx >= nBuckets) continue;
+    for (let ci = 0; ci < topCands.length; ci++) {
+      if (b.v.has(topCands[ci])) buckets[idx][ci]++;
+    }
+  }
+  const stackTotals = buckets.map(b => b.reduce((s, v) => s + v, 0));
+  const maxStack    = Math.max(...stackTotals, 1);
+
+  const dpr  = window.devicePixelRatio || 1;
+  const cW   = canvas.offsetWidth  || 800;
+  const cH   = canvas.offsetHeight || 200;
+  canvas.width  = cW * dpr;
+  canvas.height = cH * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const PL = 4, PR = 4, PT = 10, PB = 26;
+  const chartW = cW - PL - PR;
+  const chartH = cH - PT - PB;
+  const bw = chartW / nBuckets;
+
+  ctx.clearRect(0, 0, cW, cH);
+
+  ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 1;
+  for (let g = 1; g <= 4; g++) {
+    const y = PT + chartH - chartH * g / 4;
+    ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(PL + chartW, y); ctx.stroke();
+  }
+  ctx.strokeStyle = '#e0e0e0';
+  ctx.beginPath(); ctx.moveTo(PL, PT + chartH); ctx.lineTo(PL + chartW, PT + chartH); ctx.stroke();
+
+  for (let i = 0; i < nBuckets; i++) {
+    if (!stackTotals[i]) continue;
+    let yOff = 0;
+    for (let ci = 0; ci < topCands.length; ci++) {
+      if (!buckets[i][ci]) continue;
+      const h = Math.max(1, Math.round(buckets[i][ci] / maxStack * chartH));
+      const x = PL + i * bw;
+      const y = PT + chartH - yOff - h;
+      ctx.fillStyle = STACK_COLORS[ci % STACK_COLORS.length];
+      ctx.fillRect(x + 0.5, y, Math.max(bw - 1, 1), h);
+      yOff += h;
+    }
+  }
+
+  ctx.fillStyle = '#aaa';
+  ctx.font = `10px -apple-system,BlinkMacSystemFont,sans-serif`;
+  ctx.textAlign = 'center';
+  for (let h = 0; h <= 12; h++) {
+    const bi = h * 6;
+    if (bi <= nBuckets) ctx.fillText(`${9 + h}:00`, PL + bi * bw, cH - 6);
+  }
+
+  if (legend) {
+    legend.innerHTML = topCands.map((id, ci) => {
+      const parts = C[id].name.split(' ');
+      const short = parts[0] + (parts[1] ? ' ' + parts[1][0] + '.' : '');
+      return `<span><span class="tleg-dot" style="background:${STACK_COLORS[ci]}"></span>№${id} ${short}</span>`;
+    }).join('');
+  }
 }
 
 function renderRankChart() {
@@ -1239,7 +1340,7 @@ function renderTimeChart() {
   }
 }
 
-window.addEventListener('resize', () => { if (chartsVisible) renderTimeChart(); });
+window.addEventListener('resize', () => { if (chartsVisible) { renderTimeChart(); renderStackChart(); } });
 
 function setSort(s, btn) {
   if (sort === s) { sort = 'num'; btn.classList.remove('active'); }
